@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61", "wheel", "packaging", "cmake", "numpy<2.0", "rdkit==2025.03.5"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "smiles-fp"
+version = "2025.03.5"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+dependencies = ["numpy<2.0", "rdkit==2025.03.5"]
+
+[project.optional-dependencies]
+dev = ["joblib", "tqdm", "pytest", "pytest-benchmark"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["smiles_fp*", "include"]

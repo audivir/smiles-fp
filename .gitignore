@@ -1,0 +1,11 @@
+build/
+dist/
+include/
+__pycache__/
+*.pyc
+*.egg-info/
+.mypy_cache
+.ruff_cache
+.pytest_cache
+.benchmarks
+.vscode
