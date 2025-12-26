@@ -53,7 +53,11 @@ def similarity_search(
         else:
             fps_path = str(tmpdir / "fps.bin")
             save_fingerprints(fps, str(fps_path))
-        sims = bulk_tanimoto_mmap(query_path, fps_path, num_threads)
+        sims = bulk_tanimoto_mmap(
+            query_path,
+            fps_path,
+            num_threads,
+        )
 
     k = min(k, len(fps_ids))
     sims = sims.reshape(len(query_ids), len(fps_ids))
@@ -65,7 +69,12 @@ def similarity_search(
         top_results: list[tuple[T, float]] = []
         for rank in range(k):
             fps_ix = top_k_ixs[rank]
-            top_results.append((fps_ids[fps_ix], sims[ix, fps_ix]))
+            top_results.append(
+                (
+                    fps_ids[fps_ix],
+                    sims[ix, fps_ix],
+                )
+            )
         result[query_ids[ix]] = top_results
 
     return result

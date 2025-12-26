@@ -1,4 +1,3 @@
-# noqa: INP001
 """Install smiles-fp package."""
 
 from __future__ import annotations
@@ -9,8 +8,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+import boost_headers
 import numpy as np
 import rdkit
+import rdkit_headers
 from setuptools import Extension, setup
 from setuptools.command.build_ext import build_ext as _build_ext
 
@@ -19,7 +20,7 @@ RDKIT_VERSION: str = rdkit.__version__
 
 
 def find_lib(libs_dir: Path, glob_pattern: str) -> Path:
-    """Find shared library files matching pattern."""
+    """Find the first library file matching the provided pattern."""
     try:
         return next(libs_dir.glob(glob_pattern))
     except StopIteration as e:
@@ -31,15 +32,6 @@ class build_ext(_build_ext):  # noqa: N801
 
     def run(self) -> None:
         """Build extension."""
-        subprocess.check_output(  # noqa: S603
-            [
-                "/bin/bash",
-                PARENT / "build.sh",
-                f"Release_{RDKIT_VERSION.replace('.', '_')}",
-            ],
-            cwd=PARENT,
-        )
-
         # First run the normal build
         super().run()
 
@@ -57,24 +49,17 @@ class build_ext(_build_ext):  # noqa: N801
                 ext_path = self.get_ext_fullpath(ext.name)
 
                 otool_output = subprocess.check_output(  # noqa: S603
-                    [otool, "-L", ext_path], text=True
+                    [otool, "-L", ext_path],
+                    text=True,
                 )
-                dylibs = [
-                    Path(p.split("(")[0].strip()) for p in otool_output.splitlines()[1:]
-                ]
+                dylibs = [Path(p.split("(")[0].strip()) for p in otool_output.splitlines()[1:]]
 
                 # List of absolute -> relative library paths to patch
                 for dylib in dylibs:
                     if not dylib.is_relative_to("/DLC"):
                         continue
                     subprocess.check_call(  # noqa: S603
-                        [
-                            install_name_tool,
-                            "-change",
-                            dylib,
-                            loader_base / dylib.name,
-                            ext_path,
-                        ]
+                        [install_name_tool, "-change", dylib, loader_base / dylib.name, ext_path]
                     )
 
 
@@ -149,9 +134,7 @@ if system == "Linux":
         "libboost_charconv-*",
         "libboost_atomic-*",
     ]
-    additional_libraries: list[str] = [
-        f"-l:{find_lib(rdkit_libs, lib).name}" for lib in additional
-    ]
+    additional_libraries: list[str] = [f"-l:{find_lib(rdkit_libs, lib).name}" for lib in additional]
     extra_link_args = [
         f"-l:{boost_lib.name}",
         f"-l:{datastructs_lib.name}",
@@ -164,11 +147,7 @@ elif system == "Darwin":
     libraries = [lib.stem.removeprefix("lib") for lib in (boost_lib, datastructs_lib)]
     extra_link_args = []
 else:
-    raise RuntimeError("unexpected branch")
-
-include_dir = PARENT / "include"
-rdkit_include = include_dir / "rdkit"
-boost_include = include_dir / "boost"
+    raise RuntimeError("unexpected platform")
 
 ext_modules = [
     Extension(
@@ -176,8 +155,8 @@ ext_modules = [
         sources=["cpp/smiles_fp.cpp"],
         include_dirs=[
             np.get_include(),  # NumPy headers
-            f"{boost_include}",  # Boost headers
-            f"{rdkit_include}",  # RDKit headers
+            boost_headers.get_include(),  # Boost headers
+            rdkit_headers.get_include() / "rdkit",  # RDKit headers
         ],
         library_dirs=[f"{rdkit_libs}"],
         libraries=libraries,
@@ -187,4 +166,7 @@ ext_modules = [
     )
 ]
 
-setup(ext_modules=ext_modules, cmdclass={"build_ext": build_ext})
+setup(
+    ext_modules=ext_modules,
+    cmdclass={"build_ext": build_ext},
+)

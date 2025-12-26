@@ -1,14 +1,15 @@
 [build-system]
-requires = ["setuptools>=61", "wheel", "packaging", "cmake", "numpy<2.0", "rdkit==2025.03.5"]
+requires = ["setuptools>=61", "wheel", "rdkit_headers==2025.09.3"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "smiles-fp"
-version = "2025.03.5"
-description = "Add your description here"
+version = "0.1.2025.09.3"
+description = "Multithreaded Tanimoto Similarity for RDKit Fingerprints."
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
-dependencies = ["numpy<2.0", "rdkit==2025.03.5"]
+license-files = ["LICENSE"]
+dependencies = ["numpy<2.0", "rdkit==2025.09.3"]
 
 [project.optional-dependencies]
 dev = ["joblib", "tqdm", "pytest", "pytest-benchmark"]
@@ -16,3 +17,24 @@ dev = ["joblib", "tqdm", "pytest", "pytest-benchmark"]
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["smiles_fp*", "include"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "COM812", # Trailing comma missing
+    "D203", # 1 blank line required before class docstring
+    "D213", # Multi-line docstring summary should start at the second line
+    "D413", # Missing blank line after last section
+    "EM101", # Exception must not use a string literal, assign to variable first
+    "EM102", # Exception must not use an f-string literal, assign to variable first
+    "TRY003", # Avoid specifying long messages outside the exception class
+]
+
+[tool.ruff.lint.pylint]
+max-args = 10
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D103", "INP001", "S101"]

@@ -1,18 +1,21 @@
-#include <DataStructs/ExplicitBitVect.h>
-#include <algorithm>
-#include <boost/interprocess/file_mapping.hpp>
-#include <boost/interprocess/mapped_region.hpp>
 #include <boost/python.hpp>
 #include <boost/python/list.hpp>
 #include <boost/python/object.hpp>
+#include <boost/interprocess/file_mapping.hpp>
+#include <boost/interprocess/mapped_region.hpp>
+#include <DataStructs/ExplicitBitVect.h>
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 // It is crucial to include the NumPy headers for the C-API
 #define PY_ARRAY_UNIQUE_SYMBOL rdkit_bulk_tanimoto_ARRAY_API
 #include <numpy/arrayobject.h>
+
+namespace py = boost::python;
 
 // Helper function to popcount a single 64-bit block. This is a critical
 // performance primitive. Modern compilers will turn this into a single CPU
@@ -32,37 +35,62 @@ inline int popcount_block(uint64_t block) {
 #endif
 }
 
+/**
+ * Converts Python StrPath (str or pathlib.Path) to std::string.
+ * Strictly rejects 'bytes' objects.
+ * Raises ValueError on empty strings.
+ */
+std::string pathlike_to_string(py::object py_path) {
+    PyObject* obj = py_path.ptr();
+
+    // 1. Handle pathlib.Path / os.PathLike
+    if (PyObject_HasAttrString(obj, "__fspath__")) {
+        py::handle<> path_repr(PyObject_CallMethod(obj, "__fspath__", nullptr));
+        obj = path_repr.get();
+    }
+
+    // 2. Strict type check: Only allow Unicode (str)
+    if (!PyUnicode_Check(obj)) {
+        PyErr_SetString(PyExc_TypeError, "Argument must be a str or an os.PathLike returning a str (bytes not accepted).");
+        py::throw_error_already_set();
+    }
+
+    // 3. Extract and check for empty string
+    const char* c_str = PyUnicode_AsUTF8(obj);
+    if (!c_str || c_str[0] == '\0') {
+        PyErr_SetString(PyExc_ValueError, "Filename cannot be empty.");
+        py::throw_error_already_set();
+    }
+
+    return std::string(c_str);
+}
+
 /*
 Call this in long-running loops to check for Python interrupts. This is
 necessary to be able to ctrl-c out of Python scripts that are running C++ code.
 */
 void check_for_interrupt() {
   if (PyErr_CheckSignals() != 0) {
-    boost::python::throw_error_already_set();
+    py::throw_error_already_set();
   }
 }
 
-void check_for_ioerror(const std::ofstream &fout, const std::string &filename) {
-  if (!fout.is_open()) {
+template <typename T>
+void check_for_ioerror(const T &stream, const std::string &filename) {
+  static_assert(std::is_base_of<std::ios_base, T>::value, 
+                "check_for_ioerror: T must be a stream type (e.g., std::ifstream, std::ofstream)");
+  if (!stream.is_open()) {
     PyErr_SetString(PyExc_IOError,
                     ("Could not open file: " + filename).c_str());
-    boost::python::throw_error_already_set();
+    py::throw_error_already_set();
   }
 }
 
-void check_for_ioerror(const std::ifstream &fin, const std::string &filename) {
-  if (!fin.is_open()) {
-    PyErr_SetString(PyExc_IOError,
-                    ("Could not open file: " + filename).c_str());
-    boost::python::throw_error_already_set();
-  }
-}
-
-void check_for_sequence(const boost::python::object &py_seq) {
+void check_for_sequence(const py::object &py_seq) {
   PyObject *p = py_seq.ptr();
   if (!PySequence_Check(p) || PyBytes_Check(p) || PyUnicode_Check(p)) {
     PyErr_SetString(PyExc_TypeError, "Expected a sequence of objects.");
-    boost::python::throw_error_already_set();
+    py::throw_error_already_set();
   }
 }
 
@@ -80,13 +108,13 @@ unsigned int get_num_threads(int &num_threads) {
 }
 
 std::vector<ExplicitBitVect *>
-extract_fps_from_pyseq(const boost::python::object &py_seq) {
+extract_fps_from_pyseq(const py::object &py_seq) {
   check_for_sequence(py_seq);
 
   PyObject *seq_ptr = py_seq.ptr();
   ssize_t len = PySequence_Size(seq_ptr);
   if (len < 0) { // PySequence_Size can return -1 on error
-    boost::python::throw_error_already_set();
+    py::throw_error_already_set();
   }
   if (len == 0) {
     return {};
@@ -96,26 +124,26 @@ extract_fps_from_pyseq(const boost::python::object &py_seq) {
   result.reserve(len);
 
   // Get C++ type information for ExplicitBitVect once
-  const boost::python::type_info cpp_type =
-      boost::python::type_id<ExplicitBitVect>();
-  const boost::python::converter::registration *reg =
-      boost::python::converter::registry::query(cpp_type);
+  const py::type_info cpp_type =
+      py::type_id<ExplicitBitVect>();
+  const py::converter::registration *reg =
+      py::converter::registry::query(cpp_type);
 
   if (!reg || !reg->m_class_object) {
     PyErr_SetString(
         PyExc_TypeError,
         "ExplicitBitVect type is not registered with Boost.Python. Is is imported?");
-    boost::python::throw_error_already_set();
+    py::throw_error_already_set();
   }
   PyTypeObject *expected_py_type = reg->m_class_object;
 
   // Use PySequence_Fast to get a C-style array of PyObject*, which is very fast
   // and handles lists, tuples, etc. efficiently. It also manages reference
   // counts.
-  boost::python::handle<> fast_seq(
+  py::handle<> fast_seq(
       PySequence_Fast(seq_ptr, "Expected a sequence"));
   if (!fast_seq) {
-    boost::python::throw_error_already_set();
+    py::throw_error_already_set();
   }
 
   PyObject **items = PySequence_Fast_ITEMS(fast_seq.get());
@@ -126,12 +154,12 @@ extract_fps_from_pyseq(const boost::python::object &py_seq) {
     if (Py_TYPE(item) != expected_py_type) {
       PyErr_SetString(PyExc_TypeError,
                       "Sequence contains a non-ExplicitBitVect object.");
-      boost::python::throw_error_already_set();
+      py::throw_error_already_set();
     }
 
     // 2. Safely find the stored C++ pointer using Boost.Python's internal
     // helper
-    boost::python::extract<ExplicitBitVect *> extractor(item);
+    py::extract<ExplicitBitVect *> extractor(item);
 
     // 3. The helper returns a pointer to the stored pointer (a T** for a held
     // type T*). So we cast to a pointer-to-pointer and dereference it once.
@@ -157,8 +185,7 @@ double tanimoto_similarity(const ExplicitBitVect &bv1,
   return static_cast<double>(common) / (total - common);
 }
 
-// This worker function is modified to write directly into a slice of a
-// pre-allocated vector
+// This worker function writes directly into a slice of a pre-allocated vector
 void bulk_tanimoto_worker(const std::vector<ExplicitBitVect *> &chunk,
                           const std::vector<ExplicitBitVect *> &fps2,
                           double *results_ptr) {
@@ -171,16 +198,16 @@ void bulk_tanimoto_worker(const std::vector<ExplicitBitVect *> &chunk,
   }
 }
 
-// The main parallel function, now returning a NumPy array
-boost::python::object
-bulk_tanimoto_parallel(const boost::python::object &py_fps,
-                       const boost::python::object &py_fps2,
+// The main parallel function, returning a NumPy array
+py::object
+bulk_tanimoto_parallel(const py::object &py_fps,
+                       const py::object &py_fps2,
                        int num_threads = -1) {
   // This needs to be called once to initialize the NumPy C-API
   if (_import_array() < 0) {
     PyErr_SetString(PyExc_ImportError,
                     "numpy.core.multiarray failed to import");
-    boost::python::throw_error_already_set();
+    py::throw_error_already_set();
   }
 
   std::vector<ExplicitBitVect *> fps = extract_fps_from_pyseq(py_fps);
@@ -188,13 +215,13 @@ bulk_tanimoto_parallel(const boost::python::object &py_fps,
 
   unsigned int u_threads = get_num_threads(num_threads);
 
-  // Pre-allocate a single flat vector for all results. This is key.
+  // Pre-allocate a single flat vector for all results.
   size_t total_size = fps.size() * fps2.size();
   if (total_size == 0) {
     // Return an empty NumPy array
     npy_intp dims[1] = {0};
     PyObject *py_obj = PyArray_SimpleNew(1, dims, NPY_DOUBLE);
-    return boost::python::object(boost::python::handle<>(py_obj));
+    return py::object(py::handle<>(py_obj));
   }
   std::vector<double> all_results(total_size);
 
@@ -218,11 +245,11 @@ bulk_tanimoto_parallel(const boost::python::object &py_fps,
                          results_ptr);
   }
 
+  // wait for threads to finish
   for (auto &thread : threads) {
     thread.join();
   }
 
-  // --- The efficient conversion part ---
   // Create a 1D NumPy array.
   npy_intp dims[1] = {static_cast<npy_intp>(total_size)};
   PyObject *py_obj = PyArray_SimpleNew(1, dims, NPY_DOUBLE);
@@ -233,18 +260,18 @@ bulk_tanimoto_parallel(const boost::python::object &py_fps,
   // Copy all the C++ results into the NumPy array in one go
   memcpy(py_arr_data, all_results.data(), total_size * sizeof(double));
 
-  // Wrap the PyObject* in a boost::python::object and return it.
+  // Wrap the PyObject* in a py::object and return it.
   // The handle<> manages the reference count correctly.
-  return boost::python::object(boost::python::handle<>(py_obj));
+  return py::object(py::handle<>(py_obj));
 }
 
 // Helper implementation for saving fingerprints.
-void save_fingerprints_impl(const boost::python::object &py_seq,
-                            const boost::python::object &py_filename) {
+void save_fingerprints_impl(const py::object &py_seq,
+                            const py::object &py_filename) {
   // Extract all C++ pointers at once, outside the main loop.
   std::vector<ExplicitBitVect *> fps = extract_fps_from_pyseq(py_seq);
 
-  std::string filename = boost::python::extract<std::string>(py_filename);
+  std::string filename = pathlike_to_string(py_filename);
 
   std::ofstream fout(filename, std::ios::binary);
   check_for_ioerror(fout, filename);
@@ -288,15 +315,15 @@ void save_fingerprints_impl(const boost::python::object &py_seq,
   fout.close();
 }
 // Helper implementation for loading fingerprints.
-boost::python::list
-load_fingerprints_impl(const boost::python::object &py_filename) {
-  std::string filename = boost::python::extract<std::string>(py_filename);
+py::list
+load_fingerprints_impl(const py::object &py_filename) {
+  std::string filename = pathlike_to_string(py_filename);
 
   std::ifstream fin(filename, std::ios::binary);
   check_for_ioerror(fin, filename);
 
   if (fin.peek() == EOF) { // Handle empty file
-    return boost::python::list();
+    return py::list();
   }
 
   // Read header
@@ -305,7 +332,7 @@ load_fingerprints_impl(const boost::python::object &py_filename) {
   fin.read(reinterpret_cast<char *>(&num_bits), sizeof(num_bits));
 
   if (!fin) { // Handle file that only contains a partial header
-    return boost::python::list();
+    return py::list();
   }
 
   // We work on a vector first, then convert to a list at the end.
@@ -343,9 +370,9 @@ load_fingerprints_impl(const boost::python::object &py_filename) {
   fin.close();
 
   // Create the Python list at the end, in one go.
-  boost::python::list result;
+  py::list result;
   for (const auto &fp : fps_vec) {
-    result.append(boost::python::object(boost::python::ptr(fp)));
+    result.append(py::object(py::ptr(fp)));
   }
 
   return result;
@@ -426,19 +453,19 @@ void tanimoto_mmap_worker(
 }
 
 // The main function exposed to Python.
-boost::python::object
-bulk_tanimoto_mmap(const boost::python::object &py_filename1,
-                   const boost::python::object &py_filename2,
+py::object
+bulk_tanimoto_mmap(const py::object &py_filename1,
+                   const py::object &py_filename2,
                    int num_threads = -1) {
   // This must be called once per function that uses the NumPy C-API
   if (_import_array() < 0) {
     PyErr_SetString(PyExc_ImportError,
                     "numpy.core.multiarray failed to import");
-    boost::python::throw_error_already_set();
+    py::throw_error_already_set();
   }
 
-  std::string filename1 = boost::python::extract<std::string>(py_filename1);
-  std::string filename2 = boost::python::extract<std::string>(py_filename2);
+  std::string filename1 = pathlike_to_string(py_filename1);
+  std::string filename2 = pathlike_to_string(py_filename2);
 
   // 1. Memory-map files. This is RAII, so they are unmapped on scope exit.
   FingerprintData data1(filename1);
@@ -493,31 +520,31 @@ bulk_tanimoto_mmap(const boost::python::object &py_filename1,
   void *py_arr_data = PyArray_DATA(reinterpret_cast<PyArrayObject *>(py_obj));
   memcpy(py_arr_data, all_results.data(), total_size * sizeof(double));
 
-  return boost::python::object(boost::python::handle<>(py_obj));
+  return py::object(py::handle<>(py_obj));
 }
 
 BOOST_PYTHON_MODULE(_smiles_fp) {
-  boost::python::def("bulk_tanimoto_parallel", bulk_tanimoto_parallel,
-                     (boost::python::arg("py_fps"),
-                      boost::python::arg("py_fps2"),
-                      boost::python::arg("num_threads") = -1),
-                     "Calculates Tanimoto similarities in parallel from RDKit "
-                     "fp objects, returning a NumPy array.");
 
-  boost::python::def(
+  py::def(
       "save_fingerprints", save_fingerprints_impl,
-      (boost::python::arg("py_fps"), boost::python::arg("filename")),
-      "Saves a sequence of fingerprints to a binary file.");
+      (py::arg("py_fps"), py::arg("filename")),
+      "Save a sequence of fingerprints to a binary file.\n"
+      "All fingerprints must be of the same length.");
 
-  boost::python::def("load_fingerprints", load_fingerprints_impl,
-                     (boost::python::arg("filename")),
-                     "Loads a sequence of fingerprints from a binary file.");
+  py::def("load_fingerprints", load_fingerprints_impl,
+      (py::arg("filename")),
+      "Load a sequence of fingerprints from a binary file.");
+  
+  py::def("bulk_tanimoto_parallel", bulk_tanimoto_parallel,
+      (py::arg("py_fps"),
+       py::arg("py_fps2"),
+       py::arg("num_threads") = -1),
+      "Calculate Tanimoto similarities in parallel from RDKit fingerprint objects.");
 
-  boost::python::def(
-      "bulk_tanimoto_mmap", bulk_tanimoto_mmap,
-      (boost::python::arg("filename1"), boost::python::arg("filename2"),
-       boost::python::arg("num_threads") = -1),
-      "Calculates Tanimoto similarities between two binary fingerprint files "
-      "using memory-mapping.\n"
-      "This is extremely fast and memory-efficient for large datasets.");
+  py::def("bulk_tanimoto_mmap", bulk_tanimoto_mmap,
+      (py::arg("filename1"), py::arg("filename2"),
+       py::arg("num_threads") = -1),
+      "Calculate Tanimoto similarities between two binary fingerprint files.\n"
+      "Uses memory-mapping.\n"
+      "Faster and more memory-efficient than using the ExplicitBitVect objects directly.");
 }
