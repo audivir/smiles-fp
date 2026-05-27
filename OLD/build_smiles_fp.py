@@ -1,5 +1,7 @@
 """Configure and build the smiles-fp package."""
 
+from __future__ import annotations
+
 import argparse
 import re
 import subprocess
