@@ -44,7 +44,7 @@ def benchmark_sims(  # pragma: no cover
     return get_sims(benchmark_fps)
 
 
-def _func_caller(  # noqa: C901,PLR0912,PLR0913
+def _func_caller(  # noqa: PLR0913
     fps: list[ExplicitBitVect],
     n_threads: int = 8,
     k: int | None = None,
@@ -55,48 +55,35 @@ def _func_caller(  # noqa: C901,PLR0912,PLR0913
     tmp_path: Path | None = None,
     mmap: bool = False,
     internal: bool = False,
-    mod: Literal["rust", "cpp"] = "rust",
 ) -> NDArray[np.float64] | tuple[NDArray[np.uint32], NDArray[np.float64]]:
-    smiles_fp_mod = smiles_fp_rs
     kwargs: dict[str, Any] = {}
 
-    if mod == "cpp":  # pragma: no cover
-        if k is not None or internal:  # pragma: no cover
-            raise ValueError("k and internal not supported for cpp")
-
-        import smiles_fp
-
-        smiles_fp_mod = smiles_fp
-        kwargs["num_threads"] = n_threads
-    else:
-        if k is not None and internal:  # pragma: no cover
-            raise ValueError("k and internal are mutually exclusive")
-        kwargs["n_threads"] = n_threads
+    if k is not None and internal:  # pragma: no cover
+        raise ValueError("k and internal are mutually exclusive")
+    kwargs["n_threads"] = n_threads
 
     for key, val in (("agg", agg), ("db_offset", db_offset), ("db_limit", db_limit)):
         if val is None:
             continue
-        if mod == "cpp":  # pragma: no cover
-            raise ValueError("additional kwargs not supported for cpp")
         kwargs[key] = val
 
     if mmap:
         if not tmp_path:  # pragma: no cover
             raise ValueError("need tmp path for mmap")
         path = typ(tmp_path / "test_fps.bin")
-        smiles_fp_mod.save_fingerprints(fps, path)
+        smiles_fp_rs.save_fingerprints(fps, path)
 
         if k is not None:
-            return smiles_fp_mod.bulk_tanimoto_mmap_topk(path, path, k, **kwargs)
+            return smiles_fp_rs.bulk_tanimoto_mmap_topk(path, path, k, **kwargs)
         if internal:
-            return smiles_fp_mod.internal_tanimoto_mmap(path, **kwargs)
-        return smiles_fp_mod.bulk_tanimoto_mmap(path, path, **kwargs)
+            return smiles_fp_rs.internal_tanimoto_mmap(path, **kwargs)
+        return smiles_fp_rs.bulk_tanimoto_mmap(path, path, **kwargs)
 
     if k is not None:
-        return smiles_fp_mod.bulk_tanimoto_parallel_topk(fps, fps, k, **kwargs)
+        return smiles_fp_rs.bulk_tanimoto_parallel_topk(fps, fps, k, **kwargs)
     if internal:
-        return smiles_fp_mod.internal_tanimoto_parallel(fps, **kwargs)
-    return smiles_fp_mod.bulk_tanimoto_parallel(fps, fps, **kwargs)
+        return smiles_fp_rs.internal_tanimoto_parallel(fps, **kwargs)
+    return smiles_fp_rs.bulk_tanimoto_parallel(fps, fps, **kwargs)
 
 
 def _single(  # pragma: no cover
@@ -158,21 +145,16 @@ def test_benchmark_rdkit_tanimoto(  # pragma: no cover
 
 @pytest.mark.parametrize("mmap", [True, False], ids=["mmap", "direct"])
 @pytest.mark.parametrize("internal", [True, False], ids=["in", "ext"])
-@pytest.mark.parametrize("mod", ["cpp", "rust"])
 @pytest.mark.parametrize("n_threads", THREADS)
 def test_benchmark_bulk_tanimoto_parallel(  # noqa: PLR0913 # pragma: no cover
     mmap: bool,
     internal: bool,
-    mod: Literal["cpp", "rust"],
     n_threads: int,
     benchmark_fps: list[ExplicitBitVect],
     benchmark_sims: NDArray[np.float64],
     benchmark: BenchmarkFixture,
     tmp_path: Path,
 ) -> None:
-    if mod == "cpp" and internal:
-        pytest.skip("Internal not implemented for cpp")
-
     if len(benchmark_fps) > MAX_FPS:
         pytest.skip("bulk_tanimoto_parallel is too memory intensive, skipping")
 
@@ -180,7 +162,6 @@ def test_benchmark_bulk_tanimoto_parallel(  # noqa: PLR0913 # pragma: no cover
         _func_caller,
         fps=benchmark_fps,
         n_threads=n_threads,
-        mod=mod,
         tmp_path=tmp_path,
         mmap=mmap,
         internal=internal,
@@ -189,9 +170,6 @@ def test_benchmark_bulk_tanimoto_parallel(  # noqa: PLR0913 # pragma: no cover
     if internal:
         sims = smiles_fp_rs.to_matrix(sims, len(benchmark_fps))
         np.fill_diagonal(sims, 1.0)
-
-    if mod == "cpp":
-        sims = sims.reshape((len(benchmark_fps), -1))
 
     np.testing.assert_array_equal(sims, benchmark_sims)
 

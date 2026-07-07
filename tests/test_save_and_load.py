@@ -20,19 +20,12 @@ def _func_caller(
     tmp_path: Path,
     mode: Literal["load", "save"],
     typ: type[str | Path] = Path,
-    mod: Literal["rust", "cpp"] = "rust",
 ) -> list[ExplicitBitVect]:
     path = typ(tmp_path / "test_fps.bin")
-    smiles_fp_mod = smiles_fp_rs
-
-    if mod == "cpp":
-        import smiles_fp
-
-        smiles_fp_mod = smiles_fp
 
     if mode == "load":
-        return smiles_fp_mod.load_fingerprints(path)
-    smiles_fp_mod.save_fingerprints(fps, path)
+        return smiles_fp_rs.load_fingerprints(path)
+    smiles_fp_rs.save_fingerprints(fps, path)
     return fps
 
 
@@ -44,8 +37,8 @@ def test_save_and_load_fingerprints_input(
     tmp_path: Path,
 ) -> None:
     test_fps = list(conftest.get_cached_fps().values())[:64]
-    _func_caller(test_fps, tmp_path, mode="save", typ=strpath, mod=mod)
-    loaded = _func_caller(test_fps, tmp_path, mode="load", typ=strpath, mod=mod)
+    _func_caller(test_fps, tmp_path, mode="save", typ=strpath)
+    loaded = _func_caller(test_fps, tmp_path, mode="load", typ=strpath)
     assert test_fps == loaded
 
 
@@ -65,7 +58,7 @@ def test_benchmark_save_fingerprints(  # pragma: no cover
     tmp_path: Path,
     benchmark: BenchmarkFixture,
 ) -> None:
-    benchmark(_func_caller, tmp_path=tmp_path, fps=benchmark_fps, mod=mod, mode="save")
+    benchmark(_func_caller, tmp_path=tmp_path, fps=benchmark_fps, mode="save")
     loaded = _func_caller(benchmark_fps, tmp_path, mode="load")
     assert benchmark_fps == loaded
 
@@ -78,7 +71,7 @@ def test_benchmark_load_fingerprints(  # pragma: no cover
     benchmark: BenchmarkFixture,
 ) -> None:
     _func_caller(benchmark_fps, tmp_path, mode="save")
-    loaded = benchmark(_func_caller, tmp_path=tmp_path, fps=benchmark_fps, mod=mod, mode="load")
+    loaded = benchmark(_func_caller, tmp_path=tmp_path, fps=benchmark_fps, mode="load")
     assert benchmark_fps == loaded
 
 

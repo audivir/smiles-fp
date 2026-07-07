@@ -209,7 +209,7 @@ def fetch_rdkit_headers(rdkit_ver: Version, env_dir: Path) -> tuple[Path, Path]:
     return code_dir, build_code_dir
 
 
-def cache_libs(  # noqa: C901, PLR0912, PLR0913
+def cache_libs(  # noqa: C901,PLR0912,PLR0913
     env_dir: StrPath,
     pip_libs_dir: StrPath,
     platform: Literal["darwin", "linux", "win32"],
