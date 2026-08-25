@@ -80,7 +80,7 @@ def download_file(env_dir: StrPath, url: str, dest_path: StrPath) -> None:
 
 def get_wheel_platform(
     platform: Literal["darwin", "linux", "win32"],
-    machine: Literal["arm64", "aarch64", "amd64", "x86_64"],
+    machine: Literal["arm64", "aarch64", "x86_64"],
 ) -> str:
     """Determine the correct PyPI wheel tag based on the host OS and CPU architecture."""
     if platform == "win32":
@@ -168,7 +168,7 @@ def cache_libs(  # noqa: C901,PLR0912,PLR0913,PLR0917
     env_dir: StrPath,
     pip_libs_dir: StrPath,
     platform: Literal["darwin", "linux", "win32"],
-    machine: Literal["arm64", "aarch64", "amd64", "x86_64"],
+    machine: Literal["arm64", "aarch64", "x86_64"],
     py_ver: Version,
     rdkit_ver: Version,
     boost_ver: Version | None,
@@ -283,7 +283,7 @@ def get_boost_cache(  # noqa: PLR0913,PLR0917
     rdkit_ver: Version,
     boost_ver: Version,
     platform: Literal["darwin", "linux", "win32"] | None = None,
-    machine: Literal["arm64", "aarch64", "amd64", "x86_64"] | None = None,
+    machine: Literal["arm64", "aarch64", "x86_64"] | None = None,
 ) -> Path:
     """Return the path to the dynamic libary cache for the given versions."""
     return (
@@ -331,13 +331,14 @@ def build_env(rdkit_ver: Version, py_ver: Version, env_dir: StrPath) -> None:
     python_include_dir = subprocess.check_output(py_inc_cmd, text=True).strip()  # noqa: S603
 
     if not boost_ver or not boost_link_name:
+        # "x86_64" here (not "amd64") must match what get_boost_cache() below defaults to via
+        # platform.machine(), or the probe below populates a cache dir nothing else reads from.
         boost_ver, boost_link_name = cache_libs(
-            env_dir, pip_libs_dir, "linux", "amd64", py_ver, rdkit_ver, boost_ver
+            env_dir, pip_libs_dir, "linux", "x86_64", py_ver, rdkit_ver, boost_ver
         )
         boost_versions[f"{py_ver}_{rdkit_ver}"] = f"{boost_ver}"
         boost_versions_file.write_text(json.dumps(boost_versions))
 
-        # platform.machine() reports "x86_64", never the "amd64" alias used as the probe above.
         if sys.platform != "linux" or platform_mod.machine() != "x86_64":
             _, boost_link_name = cache_libs(
                 env_dir,
