@@ -10,11 +10,10 @@ Rust-accelerated Tanimoto similarity search over RDKit Morgan fingerprints.
 
 ## Installation
 
-A wheel is published to PyPI per supported RDKit release, with the RDKit version appended to
-the package version (e.g. `0.1.0.2026.3.2` for RDKit `2026.3.2`):
+A wheel is published to PyPI per supported RDKit release, pin the RDKit version during installation:
 
 ```bash
-uv pip install smiles-fp==0.1.0.2026.3.2
+uv pip install smiles-fp~=0.2.0 rdkit~=2024.0 # installs smiles-fp==0.2.0.2024.9.6 and rdkit==2024.9.6
 ```
 
 To build locally instead, `build_wheels.py` builds wheels per RDKit release into a local index:
@@ -35,6 +34,10 @@ from smiles_fp.search import similarity_search
 mols = get_mols(["CCO", "CCN"])
 fps = get_morgan_fps(mols)
 ```
+
+## Roadmap
+
+- Build boost headers ourselves instead of relying on the conda-forge `boost` package
 
 ## License
 
