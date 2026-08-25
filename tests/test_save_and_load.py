@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING, Literal
 
 import conftest
 import pytest
-import smiles_fp_rs
+import smiles_fp
 
 if TYPE_CHECKING:
-    from pytest_benchmark import BenchmarkFixture
+    from pytest_benchmark.fixture import BenchmarkFixture
     from rdkit.DataStructs import ExplicitBitVect
 
 
@@ -24,16 +24,14 @@ def _func_caller(
     path = typ(tmp_path / "test_fps.bin")
 
     if mode == "load":
-        return smiles_fp_rs.load_fingerprints(path)
-    smiles_fp_rs.save_fingerprints(fps, path)
+        return smiles_fp.load_fingerprints(path)
+    smiles_fp.save_fingerprints(fps, path)
     return fps
 
 
 @pytest.mark.parametrize("strpath", [str, Path])
-@pytest.mark.parametrize("mod", ["cpp", "rust"])
 def test_save_and_load_fingerprints_input(
     strpath: type[str | Path],
-    mod: Literal["cpp", "rust"],
     tmp_path: Path,
 ) -> None:
     test_fps = list(conftest.get_cached_fps().values())[:64]
@@ -51,9 +49,7 @@ def test_save_and_load_fingerprints(
     assert test_fps == loaded
 
 
-@pytest.mark.parametrize("mod", ["cpp", "rust"])
 def test_benchmark_save_fingerprints(  # pragma: no cover
-    mod: Literal["cpp", "rust"],
     benchmark_fps: list[ExplicitBitVect],
     tmp_path: Path,
     benchmark: BenchmarkFixture,
@@ -63,9 +59,7 @@ def test_benchmark_save_fingerprints(  # pragma: no cover
     assert benchmark_fps == loaded
 
 
-@pytest.mark.parametrize("mod", ["cpp", "rust"])
 def test_benchmark_load_fingerprints(  # pragma: no cover
-    mod: Literal["cpp", "rust"],
     benchmark_fps: list[ExplicitBitVect],
     tmp_path: Path,
     benchmark: BenchmarkFixture,

@@ -1,10 +1,11 @@
 [package]
-name = "smiles_fp_rs"
+name = "smiles_fp"
 version = "0.1.0"
 edition = "2024"
+description = "Rust-accelerated Tanimoto similarity search over RDKit Morgan fingerprints."
 
 [lib]
-name = "_smiles_fp_rs"
+name = "_smiles_fp"
 crate-type = ["cdylib"]
 
 [dependencies]
@@ -18,8 +19,9 @@ memmap2 = "0.9"
 cxx-build = "1.0"
 
 [profile.release]
-opt-level = 3
-lto = "fat"
 codegen-units = 1
+lto = "fat"
+debug = false
+opt-level = 3
 panic = "abort"
 strip = true

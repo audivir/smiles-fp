@@ -24,14 +24,16 @@ struct SimItem {
     idx: u32,
 }
 impl Eq for SimItem {}
-impl PartialOrd for SimItem {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.sim.partial_cmp(&other.sim)
-    }
-}
 impl Ord for SimItem {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.partial_cmp(other).unwrap_or(std::cmp::Ordering::Equal)
+        self.sim
+            .partial_cmp(&other.sim)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    }
+}
+impl PartialOrd for SimItem {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -86,7 +88,7 @@ mod ffi {
     }
 
     unsafe extern "C++" {
-        include!("smiles_fp_rs/src/rdkit_shim.h");
+        include!("smiles_fp/src/rdkit_shim.h");
 
         fn write_rdkit_bit_vects_to_file(py_list_ptr: usize, filename: &str);
         fn extract_rdkit_bit_vects(py_list_ptr: usize) -> FpBatch;
@@ -105,7 +107,7 @@ impl FpBatch {
 /// Returns the number of u64 blocks needed (ceil)
 #[inline(always)]
 fn get_n_blocks(n_bits: usize) -> usize {
-    ((n_bits + 63) / 64) as usize
+    n_bits.div_ceil(64)
 }
 
 /// Returns a vector with the number of on bits for each fingerprint.
@@ -185,7 +187,7 @@ fn pooled_similarity<'py>(
     n_threads: i32,
     db_offset: usize,
 ) -> PyResult<Bound<'py, PyAny>> {
-    let pool = setup_local_pool(n_threads).map_err(|e| PyRuntimeError::new_err(e))?;
+    let pool = setup_local_pool(n_threads).map_err(PyRuntimeError::new_err)?;
     let popcounts2 = get_popcounts(n_fps2, n_blocks, data2);
 
     match agg {
@@ -224,7 +226,7 @@ fn pooled_similarity<'py>(
                             }
 
                             let mut sorted = heap.into_vec();
-                            sorted.sort_by(|a, b| b.0.cmp(&a.0)); // Descending
+                            sorted.sort_by_key(|a| Reverse(a.0)); // Descending
 
                             for rank in 0..k_actual {
                                 if rank < sorted.len() {
@@ -320,7 +322,7 @@ fn pooled_internal_similarity<'py>(
     data: &[u64],
     n_threads: i32,
 ) -> PyResult<Bound<'py, PyAny>> {
-    let pool = setup_local_pool(n_threads).map_err(|e| PyRuntimeError::new_err(e))?;
+    let pool = setup_local_pool(n_threads).map_err(PyRuntimeError::new_err)?;
     let popcounts = get_popcounts(n_fps, n_blocks, data);
 
     match agg {
@@ -424,7 +426,7 @@ fn load_fingerprints<'py>(
     file.read_exact(&mut header)?;
     let n_fps = u32::from_le_bytes(header[0..4].try_into().unwrap());
     let n_bits = u32::from_le_bytes(header[4..8].try_into().unwrap());
-    let n_blocks = (n_bits + 63) / 64;
+    let n_blocks = n_bits.div_ceil(64);
 
     if n_fps == 0 {
         return Ok(PyList::empty(py).into_any());
@@ -445,8 +447,6 @@ fn load_fingerprints<'py>(
     let py_list = unsafe { Bound::from_owned_ptr(py, ptr_val as *mut pyo3::ffi::PyObject) };
     Ok(py_list.into_any())
 }
-
-// --- Bulk Endpoints ---
 
 #[pyfunction]
 #[pyo3(signature = (py_fps, py_fps2, n_threads=-1, agg=None))]
@@ -632,8 +632,6 @@ fn bulk_tanimoto_mmap_topk<'py>(
     )
 }
 
-// --- Internal Endpoints ---
-
 #[pyfunction]
 #[pyo3(signature = (py_fps, n_threads=-1, agg=None))]
 fn internal_tanimoto_parallel<'py>(
@@ -689,7 +687,7 @@ fn internal_tanimoto_mmap<'py>(
 }
 
 #[pymodule]
-fn _smiles_fp_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _smiles_fp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(save_fingerprints, m)?)?;
     m.add_function(wrap_pyfunction!(load_fingerprints, m)?)?;
     m.add_function(wrap_pyfunction!(bulk_tanimoto_parallel, m)?)?;

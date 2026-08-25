@@ -6,7 +6,7 @@ from multiprocessing import cpu_count
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypeVar
 
-from smiles_fp_rs._smiles_fp_rs import bulk_tanimoto_mmap, bulk_tanimoto_mmap_topk
+from smiles_fp._smiles_fp import bulk_tanimoto_mmap, bulk_tanimoto_mmap_topk
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Sequence
@@ -23,7 +23,7 @@ def windowed_bulk_tanimoto(
     db: StrPath,
     window_size: int = 10_000,
     n_threads: int = -1,
-    agg: Literal["max", "min", "full"] | None = None,
+    agg: Literal["max", "min", "full", "mean"] | None = None,
 ) -> Generator[NDArray[np.float64]]:
     """Yield chunked similarity matrices to prevent out-of-memory errors.
 
@@ -32,7 +32,7 @@ def windowed_bulk_tanimoto(
         db: Path to the database binary fingerprint file.
         window_size: Size of the window
         n_threads: The number of threads to use. Defaults to -1 (auto-detect).
-        agg: Aggregation method. Defaults to 'full'.
+        agg: Aggregation method, "mean" is not supported. Defaults to 'full'.
 
     Returns:
         A generator with array window (shape depending on aggregation)
@@ -57,7 +57,7 @@ def windowed_bulk_tanimoto(
         )
 
 
-def similarity_search(  # noqa: PLR0913
+def similarity_search(  # noqa: PLR0913,PLR0917
     query_ids: Sequence[T],
     query: StrPath,
     db_ids: Sequence[T],

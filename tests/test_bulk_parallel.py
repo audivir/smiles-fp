@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import conftest
 import numpy as np
 import pytest
-import smiles_fp_rs
+import smiles_fp
 from rdkit import DataStructs
 
 if TYPE_CHECKING:
@@ -44,7 +44,7 @@ def benchmark_sims(  # pragma: no cover
     return get_sims(benchmark_fps)
 
 
-def _func_caller(  # noqa: PLR0913
+def _func_caller(  # noqa: PLR0913,PLR0917
     fps: list[ExplicitBitVect],
     n_threads: int = 8,
     k: int | None = None,
@@ -71,19 +71,19 @@ def _func_caller(  # noqa: PLR0913
         if not tmp_path:  # pragma: no cover
             raise ValueError("need tmp path for mmap")
         path = typ(tmp_path / "test_fps.bin")
-        smiles_fp_rs.save_fingerprints(fps, path)
+        smiles_fp.save_fingerprints(fps, path)
 
         if k is not None:
-            return smiles_fp_rs.bulk_tanimoto_mmap_topk(path, path, k, **kwargs)
+            return smiles_fp.bulk_tanimoto_mmap_topk(path, path, k, **kwargs)
         if internal:
-            return smiles_fp_rs.internal_tanimoto_mmap(path, **kwargs)
-        return smiles_fp_rs.bulk_tanimoto_mmap(path, path, **kwargs)
+            return smiles_fp.internal_tanimoto_mmap(path, **kwargs)
+        return smiles_fp.bulk_tanimoto_mmap(path, path, **kwargs)
 
     if k is not None:
-        return smiles_fp_rs.bulk_tanimoto_parallel_topk(fps, fps, k, **kwargs)
+        return smiles_fp.bulk_tanimoto_parallel_topk(fps, fps, k, **kwargs)
     if internal:
-        return smiles_fp_rs.internal_tanimoto_parallel(fps, **kwargs)
-    return smiles_fp_rs.bulk_tanimoto_parallel(fps, fps, **kwargs)
+        return smiles_fp.internal_tanimoto_parallel(fps, **kwargs)
+    return smiles_fp.bulk_tanimoto_parallel(fps, fps, **kwargs)
 
 
 def _single(  # pragma: no cover
@@ -146,7 +146,7 @@ def test_benchmark_rdkit_tanimoto(  # pragma: no cover
 @pytest.mark.parametrize("mmap", [True, False], ids=["mmap", "direct"])
 @pytest.mark.parametrize("internal", [True, False], ids=["in", "ext"])
 @pytest.mark.parametrize("n_threads", THREADS)
-def test_benchmark_bulk_tanimoto_parallel(  # noqa: PLR0913 # pragma: no cover
+def test_benchmark_bulk_tanimoto_parallel(  # noqa: PLR0913,PLR0917 # pragma: no cover
     mmap: bool,
     internal: bool,
     n_threads: int,
@@ -168,7 +168,7 @@ def test_benchmark_bulk_tanimoto_parallel(  # noqa: PLR0913 # pragma: no cover
     )
 
     if internal:
-        sims = smiles_fp_rs.to_matrix(sims, len(benchmark_fps))
+        sims = smiles_fp.to_matrix(sims, len(benchmark_fps))
         np.fill_diagonal(sims, 1.0)
 
     np.testing.assert_array_equal(sims, benchmark_sims)
@@ -184,7 +184,7 @@ def test_internal_tanimoto(n: int, mmap: bool, tmp_path: Path) -> None:
     sims = _func_caller(test_fps, tmp_path=tmp_path, mmap=mmap, internal=True)
     if isinstance(sims, tuple):  # pragma: no cover
         raise TypeError("top k result instead of similarity matrix")
-    sims = smiles_fp_rs.to_matrix(sims, n)
+    sims = smiles_fp.to_matrix(sims, n)
 
     np.testing.assert_allclose(sims, test_sims)
 
@@ -203,7 +203,7 @@ def test_internal_tanimoto_agg(
     vector = _func_caller(test_fps, tmp_path=tmp_path, mmap=mmap, internal=True)
     if isinstance(vector, tuple):  # pragma: no cover
         raise TypeError("top k result instead of similarity matrix")
-    full_matrix = smiles_fp_rs.to_matrix(vector, n)
+    full_matrix = smiles_fp.to_matrix(vector, n)
 
     rust_agg = _func_caller(test_fps, agg=agg, tmp_path=tmp_path, mmap=mmap, internal=True)
 

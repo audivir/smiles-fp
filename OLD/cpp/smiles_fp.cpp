@@ -77,7 +77,7 @@ void check_for_interrupt() {
 
 template <typename T>
 void check_for_ioerror(const T &stream, const std::string &filename) {
-  static_assert(std::is_base_of<std::ios_base, T>::value, 
+  static_assert(std::is_base_of<std::ios_base, T>::value,
                 "check_for_ioerror: T must be a stream type (e.g., std::ifstream, std::ofstream)");
   if (!stream.is_open()) {
     PyErr_SetString(PyExc_IOError,
@@ -534,7 +534,7 @@ BOOST_PYTHON_MODULE(_smiles_fp) {
   py::def("load_fingerprints", load_fingerprints_impl,
       (py::arg("filename")),
       "Load a sequence of fingerprints from a binary file.");
-  
+
   py::def("bulk_tanimoto_parallel", bulk_tanimoto_parallel,
       (py::arg("py_fps"),
        py::arg("py_fps2"),

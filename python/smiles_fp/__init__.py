@@ -5,7 +5,7 @@ from __future__ import annotations
 # initialize dynamic libraries
 import rdkit  # noqa: F401
 
-from smiles_fp_rs._smiles_fp_rs import (
+from smiles_fp._smiles_fp import (
     bulk_tanimoto_mmap,
     bulk_tanimoto_mmap_topk,
     bulk_tanimoto_parallel,
@@ -15,8 +15,8 @@ from smiles_fp_rs._smiles_fp_rs import (
     load_fingerprints,
     save_fingerprints,
 )
-from smiles_fp_rs.helpers import get_mols, get_morgan_fps, mol_from_smi, to_matrix
-from smiles_fp_rs.search import similarity_search, windowed_bulk_tanimoto
+from smiles_fp.helpers import get_mols, get_morgan_fps, mol_from_smi, to_matrix
+from smiles_fp.search import similarity_search, windowed_bulk_tanimoto
 
 __all__ = [
     "bulk_tanimoto_mmap",
@@ -30,7 +30,6 @@ __all__ = [
     "load_fingerprints",
     "mol_from_smi",
     "save_fingerprints",
-    "similarity_search",
     "similarity_search",
     "to_matrix",
     "windowed_bulk_tanimoto",

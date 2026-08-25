@@ -1,4 +1,4 @@
-"""Type stubs for the compiled Rust module '_smiles_fp_rs'.
+"""Type stubs for the compiled Rust module '_smiles_fp'.
 
 This file provides type hints for static analysis tools (e.g., 'mypy', 'pyright')
 and enables autocompletion in IDEs for the functions defined in Rust.

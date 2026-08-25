@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
-from smiles_fp_rs import get_mols, get_morgan_fps
+from smiles_fp import get_mols, get_morgan_fps
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -16,13 +16,11 @@ if TYPE_CHECKING:
     from rdkit.DataStructs import ExplicitBitVect
 
 N_SMILES = 10_000
-TEST_SIZES = (0, 1, 7, 16, 100)
 TEST_SIZES = (0, 1, 100)
 
 BENCHMARK_SIZES = (2_500,)
 
 # n_bits = 0 fails with RDKit
-FP_SIZES = (1, 31, 32, 64, 127, 512)
 FP_SIZES = (1, 512)
 
 PARENT = Path(__file__).parent

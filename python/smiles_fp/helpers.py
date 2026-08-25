@@ -10,7 +10,7 @@ from rdkit.Chem import rdFingerprintGenerator as rdFPGen
 from tqdm import tqdm
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Iterable, Sequence
+    from collections.abc import Iterable, Sequence
 
     import numpy as np
     from numpy.typing import NDArray
@@ -58,7 +58,8 @@ def mol_from_smi(smi: str) -> Chem.Mol:
     Raises:
         ValueError: If invalid SMILES are provide
     """
-    if mol := Chem.MolFromSmiles(smi):
+    mol: Chem.Mol | None = Chem.MolFromSmiles(smi)
+    if mol:
         return mol
     raise ValueError(f"Could not convert {smi} to a molecule.")  # pragma: no cover
 
@@ -85,7 +86,7 @@ def get_mols(smis: Iterable[str], n_jobs: int = -1, verbose: bool = False) -> li
         n_jobs=n_jobs,
         return_as="generator",
     ) as p:
-        mol_gen: Generator[Chem.Mol] = p(joblib.delayed(mol_from_smi)(smi) for smi in smis)
+        mol_gen: Iterable[Chem.Mol] = p(joblib.delayed(mol_from_smi)(smi) for smi in smis)
 
         if verbose:  # pragma: no cover
             mol_gen = tqdm(mol_gen)

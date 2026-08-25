@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Literal
 import conftest
 import numpy as np
 import pytest
-import smiles_fp_rs
-from smiles_fp_rs.search import similarity_search, windowed_bulk_tanimoto
+import smiles_fp
+from smiles_fp.search import similarity_search, windowed_bulk_tanimoto
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -22,8 +22,8 @@ def temp_db(tmp_path: Path) -> tuple[Path, Path]:
     q_path = tmp_path / "query.bin"
     db_path = tmp_path / "db.bin"
 
-    smiles_fp_rs.save_fingerprints(test_fps[:quarter], q_path)
-    smiles_fp_rs.save_fingerprints(test_fps[quarter:], db_path)
+    smiles_fp.save_fingerprints(test_fps[:quarter], q_path)
+    smiles_fp.save_fingerprints(test_fps[quarter:], db_path)
     return q_path, db_path
 
 
@@ -59,7 +59,7 @@ def test_windowed_bulk_tanimoto(
 ) -> None:
     q_path, db_path = temp_db
 
-    full_matrix = smiles_fp_rs.bulk_tanimoto_mmap(q_path, db_path, agg=agg)
+    full_matrix = smiles_fp.bulk_tanimoto_mmap(q_path, db_path, agg=agg)
     chunks = list(windowed_bulk_tanimoto(q_path, db_path, window_size=5, agg=agg))
 
     stacked = np.hstack(chunks) if agg == "full" else np.stack(chunks, axis=1)
