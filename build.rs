@@ -62,7 +62,7 @@ fn main() {
         .flag_if_supported("-O3")
         .flag_if_supported("-Wno-unused-parameter")
         .flag_if_supported("-Wno-missing-field-initializers")
-        .compile("smiles_fp_rs_cxx");
+        .compile("smiles_fp_cxx");
 
     // Link Rust
     println!("cargo:rustc-link-search=native={}", pip_lib_dir);

@@ -16,6 +16,8 @@ import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+from packaging.version import Version
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -25,54 +27,6 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 
 LIB_EXTS = (".so", ".dylib", ".dll")
-
-
-class Version:
-    """Shim clone of packaging's Version."""
-
-    def __init__(self, ver_str: str) -> None:
-        """Initialize a Version from a string."""
-        if not ver_str:
-            raise ValueError("Empty version string")
-        self.parts = ver_str.split(".")
-
-    def __hash__(self) -> int:
-        return hash(str(self))
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, type(self)):
-            return NotImplemented
-        return str(self) == str(other)
-
-    def __lt__(self, other: object) -> bool:
-        if not isinstance(other, type(self)):
-            return NotImplemented
-        return (self.major, self.minor, self.micro) < (other.major, other.minor, other.micro)
-
-    def __repr__(self) -> str:
-        return f"<{self}>"
-
-    def __str__(self) -> str:
-        return ".".join(self.parts)
-
-    @property
-    def major(self) -> int:
-        """Major version."""
-        return int(self.parts[0])
-
-    @property
-    def minor(self) -> int:
-        """Minor version."""
-        if len(self.parts) > 1:
-            return int(self.parts[1])
-        return 0
-
-    @property
-    def micro(self) -> int:
-        """Patch version."""
-        if len(self.parts) > 2:  # noqa: PLR2004
-            return int(self.parts[2])
-        return 0
 
 
 def get_conda_exe() -> Path:
@@ -88,10 +42,10 @@ def get_conda_exe() -> Path:
 CONDA_EXE = get_conda_exe()
 
 if sys.platform == "darwin":
-    _install_name_tool = shutil.which("install_name_tool")
-    if not _install_name_tool:
+    install_name_tool = shutil.which("install_name_tool")
+    if not install_name_tool:
         raise FileNotFoundError("No install_name_tool binary found")
-    INSTALL_NAME_TOOL_EXE = Path(_install_name_tool)
+    INSTALL_NAME_TOOL_EXE = Path(install_name_tool)
 else:
     INSTALL_NAME_TOOL_EXE = Path()  # not needed
 
@@ -125,14 +79,15 @@ def download_file(env_dir: StrPath, url: str, dest_path: StrPath) -> None:
 
 
 def get_wheel_platform(
-    platform: Literal["darwin", "linux", "win32"], machine: Literal["arm64", "amd64"]
+    platform: Literal["darwin", "linux", "win32"],
+    machine: Literal["arm64", "aarch64", "amd64", "x86_64"],
 ) -> str:
-    """Determine the correct PyPI wheel tag based on the host OS."""
+    """Determine the correct PyPI wheel tag based on the host OS and CPU architecture."""
     if platform == "win32":
         return "win_amd64"
     if platform == "darwin":
         return "macosx_11_0_arm64" if machine == "arm64" else "macosx_10_9_x86_64"
-    return "manylinux_2_28_x86_64"  # Default Linux fallback
+    return "manylinux_2_28_aarch64" if machine == "aarch64" else "manylinux_2_28_x86_64"
 
 
 def init_conda_env(env_dir: StrPath, py_ver: Version) -> None:
@@ -209,11 +164,11 @@ def fetch_rdkit_headers(rdkit_ver: Version, env_dir: Path) -> tuple[Path, Path]:
     return code_dir, build_code_dir
 
 
-def cache_libs(  # noqa: C901,PLR0912,PLR0913
+def cache_libs(  # noqa: C901,PLR0912,PLR0913,PLR0917
     env_dir: StrPath,
     pip_libs_dir: StrPath,
     platform: Literal["darwin", "linux", "win32"],
-    machine: Literal["arm64", "amd64"],
+    machine: Literal["arm64", "aarch64", "amd64", "x86_64"],
     py_ver: Version,
     rdkit_ver: Version,
     boost_ver: Version | None,
@@ -267,7 +222,7 @@ def cache_libs(  # noqa: C901,PLR0912,PLR0913
         boost_cache = get_boost_cache(pip_libs_dir, py_ver, rdkit_ver, boost_ver, platform, machine)
         boost_cache.mkdir(exist_ok=True)
 
-        # 2. Extract, clean, and map libraries
+        # Extract, clean, and map libraries
         for file in extracted_path.rglob("*"):
             # Catch files even if the extension is buried (e.g., .so.1.0 or .1.dylib)
             if any(ext in file.suffixes for ext in LIB_EXTS):
@@ -322,13 +277,13 @@ def cache_libs(  # noqa: C901,PLR0912,PLR0913
     return boost_ver, boost_link_name
 
 
-def get_boost_cache(  # noqa: PLR0913
+def get_boost_cache(  # noqa: PLR0913,PLR0917
     pip_libs_dir: StrPath,
     py_ver: Version,
     rdkit_ver: Version,
     boost_ver: Version,
     platform: Literal["darwin", "linux", "win32"] | None = None,
-    machine: Literal["arm64", "amd64"] | None = None,
+    machine: Literal["arm64", "aarch64", "amd64", "x86_64"] | None = None,
 ) -> Path:
     """Return the path to the dynamic libary cache for the given versions."""
     return (
@@ -382,7 +337,8 @@ def build_env(rdkit_ver: Version, py_ver: Version, env_dir: StrPath) -> None:
         boost_versions[f"{py_ver}_{rdkit_ver}"] = f"{boost_ver}"
         boost_versions_file.write_text(json.dumps(boost_versions))
 
-        if sys.platform != "linux" or platform_mod.machine() != "amd64":
+        # platform.machine() reports "x86_64", never the "amd64" alias used as the probe above.
+        if sys.platform != "linux" or platform_mod.machine() != "x86_64":
             _, boost_link_name = cache_libs(
                 env_dir,
                 pip_libs_dir,

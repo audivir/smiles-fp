@@ -1,0 +1,72 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  prek:
+    runs-on: ubuntu-latest
+    # must stay in sync with .pre-commit-config.yaml
+    env:
+      RDKIT_VERSION: 2026.3.2
+      PYTHON_VERSION: "3.12"
+      ENV_DIR: .conda_envs/3.12
+      UV_NO_EDITABLE: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Install micromamba
+        run: |
+          case "$(uname -s)-$(uname -m)" in
+            Linux-x86_64) plat=linux-64 ;;
+            Linux-aarch64) plat=linux-aarch64 ;;
+            Darwin-arm64) plat=osx-arm64 ;;
+            Darwin-x86_64) plat=osx-64 ;;
+            *) echo "::error::Unsupported platform $(uname -s)-$(uname -m)"; exit 1 ;;
+          esac
+          curl -Ls "https://micro.mamba.pm/api/micromamba/$plat/latest" | tar -xvj bin/micromamba
+          echo "$PWD/bin" >> "$GITHUB_PATH"
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.12"
+      - run: uv sync --group dev
+      # add mypy to path
+      - run: echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - uses: j178/prek-action@v3.0.0
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    env:
+      RDKIT_VERSION: 2026.3.2
+      PYTHON_VERSION: ${{ matrix.python-version }}
+      ENV_DIR: .conda_envs/${{ matrix.python-version }}
+      UV_NO_EDITABLE: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install micromamba
+        run: |
+          case "$(uname -s)-$(uname -m)" in
+            Linux-x86_64) plat=linux-64 ;;
+            Linux-aarch64) plat=linux-aarch64 ;;
+            Darwin-arm64) plat=osx-arm64 ;;
+            Darwin-x86_64) plat=osx-64 ;;
+            *) echo "::error::Unsupported platform $(uname -s)-$(uname -m)"; exit 1 ;;
+          esac
+          curl -Ls "https://micro.mamba.pm/api/micromamba/$plat/latest" | tar -xvj bin/micromamba
+          echo "$PWD/bin" >> "$GITHUB_PATH"
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: uv sync --group dev --python ${{ matrix.python-version }}
+      - run: uv run coverage run -m pytest
+      - run: uv run coverage combine || true
+      - run: uv run coverage report

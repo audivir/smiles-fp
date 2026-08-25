@@ -1,0 +1,74 @@
+name: Release
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Check that the release tag matches the base Cargo.toml version
+        if: github.event_name == 'release'
+        run: |
+          pkg_version="$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [ "$pkg_version" != "$tag_version" ]; then
+            echo "::error::Release tag $GITHUB_REF_NAME (version $tag_version) does not match Cargo.toml version ($pkg_version)"
+            exit 1
+          fi
+  build:
+    needs: check-version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+        # RDKit releases to build and publish wheels for.
+        rdkit_version:
+          - 2024.9.6
+          - 2025.9.3
+          - 2025.9.6
+          - 2026.3.2
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install micromamba
+        run: |
+          case "$(uname -s)-$(uname -m)" in
+            Linux-x86_64) plat=linux-64 ;;
+            Linux-aarch64) plat=linux-aarch64 ;;
+            Darwin-arm64) plat=osx-arm64 ;;
+            Darwin-x86_64) plat=osx-64 ;;
+            *) echo "::error::Unsupported platform $(uname -s)-$(uname -m)"; exit 1 ;;
+          esac
+          curl -Ls "https://micro.mamba.pm/api/micromamba/$plat/latest" | tar -xvj bin/micromamba
+          echo "$PWD/bin" >> "$GITHUB_PATH"
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python3 -m pip install maturin requests packaging auditwheel patchelf
+      - name: Build wheels for RDKit ${{ matrix.rdkit_version }}
+        run: python3 build_wheels.py ${{ matrix.rdkit_version }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheels-${{ matrix.os }}-${{ matrix.rdkit_version }}
+          path: target/wheels
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1
