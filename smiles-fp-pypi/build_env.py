@@ -17,7 +17,6 @@ from packaging.version import Version
 if TYPE_CHECKING:
     from _typeshed import StrPath
 
-logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 
 LIB_EXTS = (".so", ".dylib", ".dll")
@@ -83,7 +82,7 @@ def fetch_headers(rdkit_ver: Version, cache_dir: StrPath) -> tuple[Path, Path]:
     metadata_files = list(header_dir.glob("rdkit_headers-*.dist-info/METADATA"))
     if not metadata_files:
         raise FileNotFoundError("rdkit-headers install did not produce dist-info metadata.")
-    metadata = metadata_files[0].read_text(encoding="utf-8")
+    metadata = metadata_files[0].read_text()
     match = re.search(r"(?m)^Requires-Dist:\s*boost-headers~=([\w.]+)\s*$", metadata)
     if not match:
         raise ValueError("Could not find a pinned boost-headers version in rdkit-headers metadata.")
@@ -113,10 +112,7 @@ def get_lib_cache(
     machine: str | None = None,
 ) -> Path:
     """Returns the path to the shared-library cache for the given versions."""
-    return (
-        Path(pip_libs_dir) / f"{py_ver.major}.{py_ver.minor}_{rdkit_ver}"
-        f"_{platform or sys.platform}_{machine or platform_mod.machine()}"
-    )
+    return Path(pip_libs_dir) / f"{py_ver.major}.{py_ver.minor}_{rdkit_ver}_{platform}_{machine}"
 
 
 def lib_ext(file: Path) -> str:
@@ -177,11 +173,10 @@ def fetch_libs(
     platform: Literal["darwin", "linux", "win32"],
     machine: Literal["arm64", "aarch64", "x86_64"],
 ) -> tuple[Path, str]:
-    """Extracts the dynamic libraries bundled inside RDKit's own PyPI wheel.
+    """Extracts the dynamic libraries bundled inside an RDKit PyPI wheel.
 
     RDKit wheels already ship libRDKit*/libboost_python* built for a specific platform and
-    Python ABI, so `uv pip install --target` (no execution, just an unpack) is enough to get at
-    them without needing a matching local interpreter.
+    Python ABI.
     """
     lib_cache = get_lib_cache(pip_libs_dir, py_ver, rdkit_ver, platform, machine)
     boost_link_name: str | None = None
@@ -255,22 +250,21 @@ def build_env(rdkit_ver: Version, py_ver: Version) -> None:
     print(f"BOOST_LINK_NAME={boost_link_name}")
 
 
-def cli(rdkit_version: str, python_version: str) -> None:
+def main(rdkit_version: str) -> None:
     """Resolves and prints the Boost/RDKit include dirs and libraries for one build.
+
+    Targets the Python version of the interpreter running this script.
 
     Args:
         rdkit_version: RDKit release to build against, e.g. 2026.3.2.
-        python_version: Target Python version, e.g. 3.12.
     """
-    build_env(Version(rdkit_version), Version(python_version))
-
-
-def main() -> None:
-    """Runs the build-environment CLI."""
-    app = doctyper.DocTyper()
-    app.command()(cli)
-    app()
+    py_ver = Version(f"{sys.version_info.major}.{sys.version_info.minor}")
+    build_env(Version(rdkit_version), py_ver)
 
 
 if __name__ == "__main__":
-    main()
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    app = doctyper.DocTyper()
+    app.command()(main)
+    app()

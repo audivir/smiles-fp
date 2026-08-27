@@ -3,7 +3,6 @@ use std::process::Command;
 
 fn main() {
     let rdkit_ver = env::var("RDKIT_VERSION").unwrap();
-    let python_ver = env::var("PYTHON_VERSION").unwrap();
 
     // pyo3-build-config sets PYO3_PYTHON to the interpreter maturin is building for; fall back
     // to whatever `python3` resolves to on PATH for plain `cargo build`/dev flows.
@@ -27,10 +26,12 @@ fn main() {
 
     println!("cargo:warning=Building environment. This may take a moment...");
 
-    let output = Command::new("python3")
+    // Run via python_exe (not a bare "python3") so build_env.py derives the target Python
+    // version from its own running interpreter, guaranteeing it always matches
+    // python_include_dir above instead of relying on a separately-passed version string.
+    let output = Command::new(&python_exe)
         .arg("smiles-fp-pypi/build_env.py")
         .arg(&rdkit_ver)
-        .arg(&python_ver)
         .output()
         .expect("Failed to execute environment builder.");
 
@@ -93,5 +94,5 @@ fn main() {
     println!("cargo:rerun-if-changed=src/rdkit_shim.cpp");
     println!("cargo:rerun-if-changed=smiles-fp-pypi/build_env.py");
     println!("cargo:rerun-if-env-changed=RDKIT_VERSION");
-    println!("cargo:rerun-if-env-changed=PYTHON_VERSION");
+    println!("cargo:rerun-if-env-changed=PYO3_PYTHON");
 }

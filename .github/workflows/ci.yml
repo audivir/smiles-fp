@@ -11,7 +11,6 @@ jobs:
   prek:
     runs-on: ubuntu-latest
     env:
-      PYTHON_VERSION: "3.12"
       UV_NO_EDITABLE: "1"
     steps:
       - uses: actions/checkout@v7
@@ -30,7 +29,7 @@ jobs:
   matrix:
     runs-on: ubuntu-latest
     outputs:
-      pairs: ${{ steps.matrix.outputs.pairs }}
+      triples: ${{ steps.matrix.outputs.triples }}
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.0.1
@@ -38,26 +37,28 @@ jobs:
           python-version: "3.12"
       - id: matrix
         run: |
-          pairs="$(uv run --no-project --with requests --with packaging --with tomli --with doctyper python3 smiles-fp-pypi/update_rdkit_matrix.py ci-matrix)"
-          echo "pairs=$pairs" >> "$GITHUB_OUTPUT"
+          triples="$(uv run --no-project --with requests --with packaging --with tomli --with doctyper python3 smiles-fp-pypi/update_rdkit_matrix.py ci-matrix)"
+          echo "triples=$triples" >> "$GITHUB_OUTPUT"
   tests:
     needs: matrix
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.triple.os }}
     strategy:
       fail-fast: false
       matrix:
-        pair: ${{ fromJson(needs.matrix.outputs.pairs) }}
+        triple: ${{ fromJson(needs.matrix.outputs.triples) }}
     env:
-      PYTHON_VERSION: ${{ matrix.pair.python-version }}
-      RDKIT_VERSION: ${{ matrix.pair.rdkit_version }}
+      RDKIT_VERSION: ${{ matrix.triple.rdkit_version }}
       UV_NO_EDITABLE: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.0.1
         with:
-          python-version: ${{ matrix.pair.python-version }}
-      - run: uv sync --group dev --python ${{ matrix.pair.python-version }}
-      - run: uv pip install "rdkit==$RDKIT_VERSION"
-      - run: uv run --no-sync coverage run -m pytest --benchmark-skip
-      - run: uv run --no-sync coverage combine || true
-      - run: uv run --no-sync coverage report
+          python-version: ${{ matrix.triple.python-version }}
+      - name: Pin rdkit to the matrix version before uv sync
+        run: |
+          sed -i.bak -E 's/rdkit==[0-9.]+/rdkit==${{ matrix.triple.rdkit_version }}/' pyproject.toml
+          rm -f pyproject.toml.bak
+      - run: uv sync --group dev
+      - run: uv run coverage run -m pytest --benchmark-skip
+      - run: uv run coverage combine || true
+      - run: uv run coverage report

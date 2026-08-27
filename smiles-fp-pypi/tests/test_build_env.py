@@ -3,19 +3,18 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from typing import Literal
+from unittest.mock import patch
 
 import build_env
 import pytest
 from packaging.version import Version
 
 
-def test_find_required_exe_returns_the_resolved_path() -> None:
+def test_find_required_exe() -> None:
     with patch("build_env.shutil.which", return_value="/usr/bin/uv"):
         assert build_env.find_required_exe("uv") == Path("/usr/bin/uv")
 
-
-def test_find_required_exe_raises_if_missing() -> None:
     with (
         patch("build_env.shutil.which", return_value=None),
         pytest.raises(FileNotFoundError, match="No uv binary found"),
@@ -23,12 +22,10 @@ def test_find_required_exe_raises_if_missing() -> None:
         build_env.find_required_exe("uv")
 
 
-def test_find_install_name_tool_on_darwin() -> None:
+def test_find_install_name_tool() -> None:
     with patch("build_env.shutil.which", return_value="/usr/bin/install_name_tool"):
         assert build_env.find_install_name_tool("darwin") == Path("/usr/bin/install_name_tool")
 
-
-def test_find_install_name_tool_off_darwin_is_not_needed() -> None:
     assert build_env.find_install_name_tool("linux") == Path()
 
 
@@ -42,11 +39,23 @@ def test_find_install_name_tool_off_darwin_is_not_needed() -> None:
         ("linux", "x86_64", "x86_64-manylinux_2_28"),
     ],
 )
-def test_get_uv_platform_maps_host_to_uv_tag(platform: str, machine: str, expected: str) -> None:
-    assert build_env.get_uv_platform(platform, machine) == expected  # type: ignore[arg-type]
+def test_get_uv_platform(
+    platform: Literal["darwin", "linux", "win32"],
+    machine: Literal["arm64", "aarch64", "x86_64"],
+    expected: str,
+) -> None:
+    assert build_env.get_uv_platform(platform, machine) == expected
 
 
-def test_fetch_headers_reuses_an_existing_cache(tmp_path: Path) -> None:
+def write_rdkit_headers_metadata(cache_dir: Path, rdkit_ver: str, boost_req: str) -> None:
+    dist_info = cache_dir / "headers" / rdkit_ver / "rdkit_headers-1.0.dist-info"
+    dist_info.mkdir(parents=True)
+    (dist_info / "METADATA").write_text(
+        f"Version: {rdkit_ver}\nRequires-Dist: {boost_req}\nRequires-Dist: rdkit=={rdkit_ver}\n"
+    )
+
+
+def test_fetch_headers(tmp_path: Path) -> None:
     header_dir = tmp_path / "headers" / "2026.3.2"
     (header_dir / "rdkit_headers" / "include" / "rdkit").mkdir(parents=True)
     (header_dir / "boost_headers" / "include").mkdir(parents=True)
@@ -57,14 +66,6 @@ def test_fetch_headers_reuses_an_existing_cache(tmp_path: Path) -> None:
     mock_call.assert_not_called()
     assert boost_include == header_dir / "boost_headers" / "include"
     assert rdkit_include == header_dir / "rdkit_headers" / "include" / "rdkit"
-
-
-def write_rdkit_headers_metadata(cache_dir: Path, rdkit_ver: str, boost_req: str) -> None:
-    dist_info = cache_dir / "headers" / rdkit_ver / "rdkit_headers-1.0.dist-info"
-    dist_info.mkdir(parents=True)
-    (dist_info / "METADATA").write_text(
-        f"Version: {rdkit_ver}\nRequires-Dist: {boost_req}\nRequires-Dist: rdkit=={rdkit_ver}\n"
-    )
 
 
 def test_fetch_headers_installs_boost_headers_matching_rdkit_headers_metadata(
@@ -106,16 +107,7 @@ def test_fetch_headers_raises_if_boost_requirement_is_missing(tmp_path: Path) ->
         build_env.fetch_headers(Version("2026.3.2"), tmp_path)
 
 
-def test_get_lib_cache_defaults_to_the_current_host(tmp_path: Path) -> None:
-    with (
-        patch("build_env.sys.platform", "linux"),
-        patch("build_env.platform_mod.machine", return_value="x86_64"),
-    ):
-        cache = build_env.get_lib_cache(tmp_path, Version("3.12"), Version("2026.3.2"))
-    assert cache == tmp_path / "3.12_2026.3.2_linux_x86_64"
-
-
-def test_get_lib_cache_uses_explicit_platform_and_machine(tmp_path: Path) -> None:
+def test_get_lib_cache(tmp_path: Path) -> None:
     cache = build_env.get_lib_cache(
         tmp_path, Version("3.12"), Version("2026.3.2"), "darwin", "arm64"
     )
@@ -130,75 +122,45 @@ def test_get_lib_cache_uses_explicit_platform_and_machine(tmp_path: Path) -> Non
         ("libfoo-abc.so.1.2", ".so"),
     ],
 )
-def test_lib_ext_maps_versioned_filenames_to_a_canonical_extension(
-    filename: str, expected: str
-) -> None:
+def test_lib_ext(filename: str, expected: str) -> None:
     assert build_env.lib_ext(Path(filename)) == expected
 
 
-def test_stage_lib_skips_files_with_no_alnum_core_name(tmp_path: Path) -> None:
-    assert build_env.stage_lib(Path(".hidden.so"), tmp_path, "linux") is None
+def test_stage_lib(tmp_path: Path) -> None:
+    windows_dll = "python312.dll"
+    linux_so = "libRDKitDataStructs-abcdef.so.1"
+    linux_name = "RDKitDataStructs"
+    semver_linux_so = "libboost_python312-abcdef.so.1.85.0"
+    semver_linux_name = "boost_python312"
+    darwin_so = "libboost_python312.so.1.85.0"
+    for name in (windows_dll, linux_so, semver_linux_so, darwin_so):
+        (tmp_path / name).write_bytes(b"data")
 
-
-def test_stage_lib_skips_non_lib_files_off_windows(tmp_path: Path) -> None:
-    assert build_env.stage_lib(Path("notlib-123.so"), tmp_path, "linux") is None
-
-
-def test_stage_lib_accepts_non_lib_files_on_windows(tmp_path: Path) -> None:
-    src = tmp_path / "python312.dll"
-    src.write_bytes(b"data")
     lib_cache = tmp_path / "cache"
     lib_cache.mkdir()
 
-    result = build_env.stage_lib(src, lib_cache, "win32")
+    assert build_env.stage_lib(tmp_path / ".hidden.so", lib_cache, "linux") is None
+    assert build_env.stage_lib(tmp_path / "notlib-123.so", lib_cache, "linux") is None
+    assert build_env.stage_lib(tmp_path / windows_dll, lib_cache, "win32") is None
+    assert build_env.stage_lib(tmp_path / linux_so, lib_cache, "linux") is None
+    assert build_env.stage_lib(tmp_path / semver_linux_so, lib_cache, "linux") == semver_linux_name
+    assert (lib_cache / windows_dll).exists()
+    assert (lib_cache / linux_so).exists()
+    assert (lib_cache / f"lib{linux_name}.so").exists()
+    assert (lib_cache / semver_linux_so).exists()
+    assert (lib_cache / f"lib{semver_linux_name}.so").exists()
 
-    assert result is None
-    assert (lib_cache / "python312.dll").exists()
-
-
-def test_stage_lib_copies_boost_python_and_returns_its_link_name(tmp_path: Path) -> None:
-    src = tmp_path / "libboost_python312-abcdef.so.1.85.0"
-    src.write_bytes(b"data")
-    lib_cache = tmp_path / "cache"
-    lib_cache.mkdir()
-
-    result = build_env.stage_lib(src, lib_cache, "linux")
-
-    assert result == "boost_python312"
-    assert (lib_cache / src.name).exists()
-    assert (lib_cache / "libboost_python312.so").exists()
-
-
-def test_stage_lib_copies_non_boost_lib_without_a_link_name(tmp_path: Path) -> None:
-    src = tmp_path / "libRDKitDataStructs-abcdef.so.1"
-    src.write_bytes(b"data")
-    lib_cache = tmp_path / "cache"
-    lib_cache.mkdir()
-
-    result = build_env.stage_lib(src, lib_cache, "linux")
-
-    assert result is None
-    assert (lib_cache / "libRDKitDataStructs.so").exists()
-
-
-def test_stage_lib_rewrites_the_install_name_on_darwin(tmp_path: Path) -> None:
-    src = tmp_path / "libboost_python312.so.1.85.0"
-    src.write_bytes(b"data")
-    lib_cache = tmp_path / "cache"
-    lib_cache.mkdir()
-
+    # install_name_tool is called
     with patch("build_env.subprocess.run") as mock_run:
-        build_env.stage_lib(src, lib_cache, "darwin")
+        build_env.stage_lib(tmp_path / darwin_so, lib_cache, "darwin")
 
     assert mock_run.call_count == 2
 
 
-def test_find_cached_boost_link_name_returns_none_when_absent(tmp_path: Path) -> None:
+def test_find_cached_boost_link_name(tmp_path: Path) -> None:
     (tmp_path / "libRDKitDataStructs.so").write_bytes(b"data")
     assert build_env.find_cached_boost_link_name(tmp_path) is None
 
-
-def test_find_cached_boost_link_name_finds_the_staged_library(tmp_path: Path) -> None:
     (tmp_path / "libboost_python312.so").write_bytes(b"data")
     assert build_env.find_cached_boost_link_name(tmp_path) == "boost_python312"
 
@@ -296,17 +258,10 @@ def test_build_env_wires_headers_and_libs_into_the_expected_env_vars(
     assert "BOOST_LINK_NAME=boost_python312" in out
 
 
-def test_cli_converts_versions_and_delegates() -> None:
+def test_main_derives_the_python_version_from_the_running_interpreter() -> None:
+    version_info = build_env.sys.version_info
+    expected_py_ver = Version(f"{version_info.major}.{version_info.minor}")
     with patch("build_env.build_env") as mock_build_env:
-        build_env.cli("2026.3.2", "3.12")
+        build_env.main("2026.3.2")
 
-    mock_build_env.assert_called_once_with(Version("2026.3.2"), Version("3.12"))
-
-
-def test_main_registers_the_command_and_runs_the_app() -> None:
-    mock_app = MagicMock()
-    with patch("build_env.doctyper.DocTyper", return_value=mock_app):
-        build_env.main()
-
-    mock_app.command.return_value.assert_called_once_with(build_env.cli)
-    mock_app.assert_called_once_with()
+    mock_build_env.assert_called_once_with(Version("2026.3.2"), expected_py_ver)

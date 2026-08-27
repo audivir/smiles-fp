@@ -15,7 +15,7 @@ def get_dev_rdkit_version() -> str:
     Raises:
         ValueError: If pyproject.toml has no pinned `rdkit==<version>` dependency.
     """
-    match = re.search(r'"rdkit==([\d.]+)"', PYPROJECT_TOML.read_text(encoding="utf-8"))
+    match = re.search(r'"rdkit==([\d.]+)"', PYPROJECT_TOML.read_text())
     if not match:
         raise ValueError(f"Could not find a pinned rdkit==<version> dependency in {PYPROJECT_TOML}")
     return match.group(1)

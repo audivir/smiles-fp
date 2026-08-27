@@ -17,10 +17,11 @@ A wheel is published to PyPI per supported RDKit release, pin the RDKit version 
 uv pip install smiles-fp~=0.2.1 rdkit~=2024.0 # installs smiles-fp==0.2.1.2024.9.6 and rdkit==2024.9.6
 ```
 
-To build locally instead, `build_wheels.py` builds wheels per RDKit release into a local index:
+To build locally instead, `build_wheel.py` builds one wheel for the RDKit version you pass it,
+targeting whichever Python interpreter runs the script (use `uv run --python` to pick one):
 
 ```bash
-python smiles-fp-pypi/build_wheels.py 2024.9.6 2025.9.3 2025.9.6 2026.3.2
+uv run --python 3.12 smiles-fp-pypi/build_wheel.py 2024.9.6
 mv ./target/wheels ./target/smiles-fp
 python -m http.server --directory ./target/
 uv pip install smiles-fp --extra-index-url http://localhost:8000

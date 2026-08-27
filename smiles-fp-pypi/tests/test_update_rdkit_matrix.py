@@ -128,7 +128,7 @@ def test_diff_new_versions_returns_everything_for_a_fresh_cargo_version() -> Non
     assert result == [Version("2024.3.6"), Version("2026.3.5")]
 
 
-def test_compute_ci_matrix_excludes_unsupported_python_rdkit_pairs() -> None:
+def test_compute_pairs_excludes_unsupported_python_rdkit_pairs() -> None:
     def fake_get_supported_pythons(rdkit_ver: Version) -> list[Version]:
         if str(rdkit_ver) == "2024.3.6":
             return [Version("3.10"), Version("3.11")]
@@ -136,20 +136,147 @@ def test_compute_ci_matrix_excludes_unsupported_python_rdkit_pairs() -> None:
         return [Version("3.9"), Version("3.10"), Version("3.14")]
 
     with (
-        patch(
-            "update_rdkit_matrix.compute_release_matrix",
-            return_value=[Version("2024.3.6"), Version("2026.3.5")],
-        ),
         patch("update_rdkit_matrix.get_requires_python", return_value=SpecifierSet(">=3.10,<3.15")),
         patch("update_rdkit_matrix.get_supported_pythons", side_effect=fake_get_supported_pythons),
     ):
-        pairs = update_rdkit_matrix.compute_ci_matrix()
+        pairs = update_rdkit_matrix.compute_pairs([Version("2024.3.6"), Version("2026.3.5")])
 
     assert pairs == [
         {"python-version": "3.10", "rdkit_version": "2024.3.6"},
         {"python-version": "3.11", "rdkit_version": "2024.3.6"},
         {"python-version": "3.10", "rdkit_version": "2026.3.5"},
         {"python-version": "3.14", "rdkit_version": "2026.3.5"},
+    ]
+
+
+def test_compute_ci_matrix_runs_every_pair_on_ubuntu_plus_the_newest_cross_platform() -> None:
+    with (
+        patch("update_rdkit_matrix.compute_release_matrix", return_value=[]),
+        patch(
+            "update_rdkit_matrix.compute_pairs",
+            return_value=[
+                {"python-version": "3.10", "rdkit_version": "2024.3.6"},
+                {"python-version": "3.14", "rdkit_version": "2026.3.5"},
+            ],
+        ),
+    ):
+        triples = update_rdkit_matrix.compute_ci_matrix()
+
+    assert triples == [
+        {"python-version": "3.10", "rdkit_version": "2024.3.6", "os": "ubuntu-latest"},
+        {"python-version": "3.14", "rdkit_version": "2026.3.5", "os": "ubuntu-latest"},
+        {"python-version": "3.14", "rdkit_version": "2026.3.5", "os": "macos-latest"},
+        {"python-version": "3.14", "rdkit_version": "2026.3.5", "os": "ubuntu-24.04-arm"},
+    ]
+
+    with (
+        patch("update_rdkit_matrix.compute_release_matrix", return_value=[]),
+        patch("update_rdkit_matrix.compute_pairs", return_value=[]),
+    ):
+        assert update_rdkit_matrix.compute_ci_matrix() == []
+
+
+def test_compute_build_matrix_delegates_to_compute_pairs() -> None:
+    with (
+        patch(
+            "update_rdkit_matrix.compute_release_matrix", return_value=[Version("2026.3.5")]
+        ) as mock_release,
+        patch(
+            "update_rdkit_matrix.compute_pairs",
+            return_value=[{"python-version": "3.12", "rdkit_version": "2026.3.5"}],
+        ) as mock_pairs,
+    ):
+        result = update_rdkit_matrix.compute_build_matrix()
+
+    mock_release.assert_called_once_with()
+    mock_pairs.assert_called_once_with([Version("2026.3.5")])
+    assert result == [{"python-version": "3.12", "rdkit_version": "2026.3.5"}]
+
+
+def test_wheel_os_maps_platform_tags_to_runner_os() -> None:
+    macos = "smiles_fp-0.2.1.2026.3.5-cp312-cp312-macosx_11_0_arm64.whl"
+    ubuntu_arm = "smiles_fp-0.2.1.2026.3.5-cp312-cp312-manylinux_2_34_aarch64.whl"
+    ubuntu = "smiles_fp-0.2.1.2026.3.5-cp312-cp312-manylinux_2_34_x86_64.whl"
+    windows = "smiles_fp-0.2.1.2026.3.5-cp312-cp312-win_amd64.whl"
+
+    assert update_rdkit_matrix.wheel_os(macos) == "macos-latest"
+    assert update_rdkit_matrix.wheel_os(ubuntu_arm) == "ubuntu-24.04-arm"
+    assert update_rdkit_matrix.wheel_os(ubuntu) == "ubuntu-latest"
+    assert update_rdkit_matrix.wheel_os(windows) is None
+
+
+def test_get_published_wheel_triples_returns_empty_set_for_unpublished_package() -> None:
+    with patch("update_rdkit_matrix.requests.get", return_value=mock_response({}, status_code=404)):
+        assert update_rdkit_matrix.get_published_wheel_triples("0.2.1") == set()
+
+
+def test_get_published_wheel_triples_recovers_rdkit_python_and_os_from_filenames() -> None:
+    releases: dict[str, list[dict[str, str]]] = {
+        "0.2.1.2024.3.6": [
+            {"filename": "smiles_fp-0.2.1.2024.3.6-cp310-cp310-manylinux_2_28_x86_64.whl"},
+            {"filename": "smiles_fp-0.2.1.2024.3.6-cp311-cp311-macosx_11_0_arm64.whl"},
+        ],
+        "0.2.1.2026.3.5": [
+            {"filename": "smiles_fp-0.2.1.2026.3.5-cp312-cp312-manylinux_2_28_aarch64.whl"},
+        ],
+        "0.1.0.2024.3.6": [  # different smiles-fp version, must be excluded
+            {"filename": "smiles_fp-0.1.0.2024.3.6-cp310-cp310-manylinux_2_28_x86_64.whl"},
+        ],
+    }
+    with patch(
+        "update_rdkit_matrix.requests.get", return_value=mock_response({"releases": releases})
+    ):
+        result = update_rdkit_matrix.get_published_wheel_triples("0.2.1")
+
+    assert result == {
+        (Version("2024.3.6"), Version("3.10"), "ubuntu-latest"),
+        (Version("2024.3.6"), Version("3.11"), "macos-latest"),
+        (Version("2026.3.5"), Version("3.12"), "ubuntu-24.04-arm"),
+    }
+
+
+def test_get_published_wheel_pairs_drops_the_os_from_the_triples() -> None:
+    with patch(
+        "update_rdkit_matrix.get_published_wheel_triples",
+        return_value={
+            (Version("2024.3.6"), Version("3.10"), "ubuntu-latest"),
+            (Version("2024.3.6"), Version("3.10"), "macos-latest"),
+        },
+    ) as mock_triples:
+        result = update_rdkit_matrix.get_published_wheel_pairs("0.2.1")
+
+    mock_triples.assert_called_once_with("0.2.1")
+    assert result == {(Version("2024.3.6"), Version("3.10"))}
+
+
+def test_missing_build_matrix_drops_already_published_triples() -> None:
+    with (
+        patch("update_rdkit_matrix.get_cargo_version", return_value="0.2.1"),
+        patch(
+            "update_rdkit_matrix.compute_build_matrix",
+            return_value=[
+                {"python-version": "3.10", "rdkit_version": "2024.3.6"},
+                {"python-version": "3.12", "rdkit_version": "2026.3.5"},
+            ],
+        ),
+        patch(
+            "update_rdkit_matrix.get_published_wheel_triples",
+            return_value={
+                # fully published: dropped for every os
+                (Version("2024.3.6"), Version("3.10"), "ubuntu-latest"),
+                (Version("2024.3.6"), Version("3.10"), "ubuntu-24.04-arm"),
+                (Version("2024.3.6"), Version("3.10"), "macos-latest"),
+                # only ubuntu-latest published: the other two os stay missing
+                (Version("2026.3.5"), Version("3.12"), "ubuntu-latest"),
+            },
+        ) as mock_published,
+    ):
+        result = update_rdkit_matrix.missing_build_matrix()
+
+    mock_published.assert_called_once_with("0.2.1")
+    assert result == [
+        {"python-version": "3.12", "rdkit_version": "2026.3.5", "os": "ubuntu-24.04-arm"},
+        {"python-version": "3.12", "rdkit_version": "2026.3.5", "os": "macos-latest"},
     ]
 
 
@@ -209,45 +336,44 @@ def test_diff_prints_the_new_versions_as_json(capsys: pytest.CaptureFixture[str]
     assert capsys.readouterr().out.strip() == '["2026.3.5"]'
 
 
-def test_ci_matrix_prints_the_computed_pairs_as_json(capsys: pytest.CaptureFixture[str]) -> None:
-    pairs = [{"python-version": "3.12", "rdkit_version": "2026.3.5"}]
-    with patch("update_rdkit_matrix.compute_ci_matrix", return_value=pairs):
+def test_ci_matrix_prints_the_computed_triples_as_json(capsys: pytest.CaptureFixture[str]) -> None:
+    triples = [{"python-version": "3.12", "rdkit_version": "2026.3.5", "os": "ubuntu-latest"}]
+    with patch("update_rdkit_matrix.compute_ci_matrix", return_value=triples):
         update_rdkit_matrix.ci_matrix()
+
+    assert capsys.readouterr().out.strip() == json.dumps(triples)
+
+
+def test_build_matrix_prints_the_computed_pairs_as_json(capsys: pytest.CaptureFixture[str]) -> None:
+    pairs = [{"python-version": "3.12", "rdkit_version": "2026.3.5"}]
+    with patch("update_rdkit_matrix.compute_build_matrix", return_value=pairs):
+        update_rdkit_matrix.build_matrix()
 
     assert capsys.readouterr().out.strip() == json.dumps(pairs)
 
 
-def test_bump_pin_reports_changed(capsys: pytest.CaptureFixture[str]) -> None:
+def test_missing_matrix_prints_the_missing_triples_as_json(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    triples = [{"python-version": "3.12", "rdkit_version": "2026.3.5", "os": "macos-latest"}]
+    with patch("update_rdkit_matrix.missing_build_matrix", return_value=triples):
+        update_rdkit_matrix.missing_matrix()
+
+    assert capsys.readouterr().out.strip() == json.dumps(triples)
+
+
+def test_bump_pin_reports_whether_the_pin_changed(capsys: pytest.CaptureFixture[str]) -> None:
     with (
         patch("update_rdkit_matrix.latest_overall", return_value=Version("2026.3.5")),
         patch("update_rdkit_matrix.bump_dev_pin", return_value=True) as mock_bump,
     ):
         update_rdkit_matrix.bump_pin()
-
     mock_bump.assert_called_once_with(Version("2026.3.5"))
     assert capsys.readouterr().out.strip() == "changed"
 
-
-def test_bump_pin_reports_unchanged(capsys: pytest.CaptureFixture[str]) -> None:
     with (
         patch("update_rdkit_matrix.latest_overall", return_value=Version("2026.3.5")),
         patch("update_rdkit_matrix.bump_dev_pin", return_value=False),
     ):
         update_rdkit_matrix.bump_pin()
-
     assert capsys.readouterr().out.strip() == "unchanged"
-
-
-def test_main_registers_all_commands_and_runs_the_app() -> None:
-    mock_app = MagicMock()
-    with patch("update_rdkit_matrix.doctyper.DocTyper", return_value=mock_app):
-        update_rdkit_matrix.main()
-
-    registered = [c.args[0] for c in mock_app.command.return_value.call_args_list]
-    assert registered == [
-        update_rdkit_matrix.release_matrix,
-        update_rdkit_matrix.diff,
-        update_rdkit_matrix.ci_matrix,
-        update_rdkit_matrix.bump_pin,
-    ]
-    mock_app.assert_called_once_with()

@@ -1,11 +1,4 @@
-"""Computes which RDKit versions smiles-fp should build wheels for and test against.
-
-Everything here is derived live from PyPI: `release.yml` builds wheels for the union of the
-current latest-per-series RDKit releases and any RDKit versions that already have a published
-smiles-fp wheel for the current Cargo.toml version (so a fresh smiles-fp release naturally
-collapses to just latest-per-series, while repeat builds under the same Cargo.toml version keep
-every already-built patch). Nothing gets committed back to release.yml.
-"""
+"""Computes which RDKit versions smiles-fp should build wheels for and test against."""
 
 from __future__ import annotations
 
@@ -16,7 +9,7 @@ from pathlib import Path
 import doctyper
 import requests
 import tomli
-from build_wheels import get_supported_pythons
+from build_wheel import get_supported_pythons
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
@@ -25,21 +18,31 @@ CARGO_TOML = REPO_ROOT / "Cargo.toml"
 PYPROJECT_TOML = REPO_ROOT / "pyproject.toml"
 MIN_MAJOR = 2024
 
-# The canonical dev/CI RDKit pin lives only in pyproject.toml; ci.yml and .pre-commit-config.yaml
-# derive it at runtime via smiles-fp-pypi/dev_rdkit_version.py instead of duplicating it.
 DEV_PIN_PATTERN = re.compile(r'"rdkit==[\d.]+"')
 DEV_PIN_TEMPLATE = '"rdkit=={version}"'
+
+CROSS_PLATFORM_OS = ["macos-latest", "ubuntu-24.04-arm"]
+ALL_OS = ["ubuntu-latest", "ubuntu-24.04-arm", "macos-latest"]
+
+CP_TAG_PATTERN = re.compile(r"-cp(\d)(\d+)-")
+
+# smiles_fp-0.2.1.2026.3.5-cp312-cp312-manylinux_2_34_aarch64.whl -> ubuntu-24.04-arm
+OS_BY_PLATFORM_TAG = (
+    ("macosx", "arm64", "macos-latest"),
+    ("manylinux", "aarch64", "ubuntu-24.04-arm"),
+    ("manylinux", "x86_64", "ubuntu-latest"),
+)
 
 
 def get_cargo_version() -> str:
     """Returns the `[package].version` string from Cargo.toml."""
-    cargo_data = tomli.loads(CARGO_TOML.read_text(encoding="utf-8"))
+    cargo_data = tomli.loads(CARGO_TOML.read_text())
     return str(cargo_data["package"]["version"])
 
 
 def get_requires_python() -> SpecifierSet:
     """Returns the `[project].requires-python` specifier from pyproject.toml."""
-    pyproject_data = tomli.loads(PYPROJECT_TOML.read_text(encoding="utf-8"))
+    pyproject_data = tomli.loads(PYPROJECT_TOML.read_text())
     return SpecifierSet(pyproject_data["project"]["requires-python"])
 
 
@@ -66,8 +69,7 @@ def fetch_latest_patches() -> list[Version]:
 def get_published_rdkit_versions(cargo_version: str) -> set[Version]:
     """Returns the RDKit versions with an already-published smiles-fp wheel for `cargo_version`.
 
-    smiles-fp's own wheel version is `f"{cargo_version}.{rdkit_version}"` (set by
-    build_wheels.py), so the RDKit version is recovered by stripping that known prefix.
+    Strips smiles-fp `cargo_version` from the wheel to recover `rdkit_version`.
     """
     response = requests.get("https://pypi.org/pypi/smiles-fp/json", timeout=30)
     if response.status_code == requests.codes.not_found:
@@ -84,7 +86,7 @@ def get_published_rdkit_versions(cargo_version: str) -> set[Version]:
 
 
 def compute_release_matrix() -> list[Version]:
-    """Computes the RDKit versions release.yml's build job should build wheels for."""
+    """Computes the RDKit versions the release job should build wheels for."""
     cargo_version = get_cargo_version()
     latest = fetch_latest_patches()
     already_published = get_published_rdkit_versions(cargo_version)
@@ -99,23 +101,93 @@ def diff_new_versions() -> list[Version]:
     return sorted(v for v in latest if v not in already_published)
 
 
-def compute_ci_matrix() -> list[dict[str, str]]:
-    """Computes the valid (python-version, rdkit_version) pairs for ci.yml's tests job.
+def compute_pairs(rdkit_versions: list[Version]) -> list[dict[str, str]]:
+    """Cross-references RDKit versions against each release's own published Python wheel tags.
 
-    Cross-references the release matrix against each RDKit release's own published Python
-    wheel tags, so combinations with no matching RDKit wheel are never scheduled (e.g. RDKit
-    2024.3.6 never published a Python 3.14 wheel).
+    Combinations with no matching RDKit wheel are dropped (e.g. RDKit 2024.3.6 never published
+    a Python 3.14 wheel).
     """
     requires_python = get_requires_python()
 
     pairs: list[dict[str, str]] = []
-    for rdkit_ver in compute_release_matrix():
+    for rdkit_ver in rdkit_versions:
         pairs.extend(
             {"python-version": str(py_ver), "rdkit_version": str(rdkit_ver)}
             for py_ver in get_supported_pythons(rdkit_ver)
             if requires_python.contains(py_ver)
         )
     return pairs
+
+
+def compute_ci_matrix() -> list[dict[str, str]]:
+    """Computes the valid (python-version, rdkit_version, os) triples for ci.yml's tests job.
+
+    Every valid pair runs on ubuntu-latest. The newest pair additionally runs once on
+    macos-latest and once on ubuntu-24.04-arm, so platform-specific build/link regressions
+    (e.g. rpath resolution, boost_python naming) get caught without tripling the whole matrix.
+    """
+    pairs = compute_pairs(compute_release_matrix())
+    triples = [{**pair, "os": "ubuntu-latest"} for pair in pairs]
+    if pairs:
+        newest = pairs[-1]
+        triples.extend({**newest, "os": os_name} for os_name in CROSS_PLATFORM_OS)
+    return triples
+
+
+def compute_build_matrix() -> list[dict[str, str]]:
+    """Computes the (python-version, rdkit_version) pairs release.yml's build job builds."""
+    return compute_pairs(compute_release_matrix())
+
+
+def wheel_os(filename: str) -> str | None:
+    """Maps a wheel filename's platform tag to the GitHub Actions runner os that built it."""
+    for platform_tag, arch_tag, os_name in OS_BY_PLATFORM_TAG:
+        if platform_tag in filename and arch_tag in filename:
+            return os_name
+    return None
+
+
+def get_published_wheel_pairs(cargo_version: str) -> set[tuple[Version, Version]]:
+    """Returns the (rdkit_version, python_version) pairs with an already-published wheel."""
+    return {
+        (rdkit_ver, py_ver) for rdkit_ver, py_ver, _os in get_published_wheel_triples(cargo_version)
+    }
+
+
+def get_published_wheel_triples(cargo_version: str) -> set[tuple[Version, Version, str]]:
+    """Returns the (rdkit_version, python_version, os) triples with an already-published wheel."""
+    response = requests.get("https://pypi.org/pypi/smiles-fp/json", timeout=30)
+    if response.status_code == requests.codes.not_found:
+        return set()
+    response.raise_for_status()
+    data = response.json()
+
+    prefix = f"{cargo_version}."
+    triples: set[tuple[Version, Version, str]] = set()
+    for ver_str, files in data["releases"].items():
+        if not ver_str.startswith(prefix):
+            continue
+        rdkit_ver = Version(ver_str[len(prefix) :])
+        for file_info in files:
+            filename = file_info["filename"]
+            cp_match = CP_TAG_PATTERN.search(filename)
+            os_name = wheel_os(filename)
+            if cp_match and os_name:  # pragma: no branch
+                py_ver = Version(f"{cp_match.group(1)}.{cp_match.group(2)}")
+                triples.add((rdkit_ver, py_ver, os_name))
+    return triples
+
+
+def missing_build_matrix() -> list[dict[str, str]]:
+    """Drops (rdkit, python, os) triples that already have a published wheel."""
+    published = get_published_wheel_triples(get_cargo_version())
+    return [
+        {**pair, "os": os_name}
+        for pair in compute_build_matrix()
+        for os_name in ALL_OS
+        if (Version(pair["rdkit_version"]), Version(pair["python-version"]), os_name)
+        not in published
+    ]
 
 
 def latest_overall() -> Version:
@@ -129,7 +201,7 @@ def bump_dev_pin(version: Version) -> bool:
     Returns:
         True if the file changed.
     """
-    original_content = PYPROJECT_TOML.read_text(encoding="utf-8")
+    original_content = PYPROJECT_TOML.read_text()
     new_content, count = DEV_PIN_PATTERN.subn(
         DEV_PIN_TEMPLATE.format(version=version), original_content
     )
@@ -137,7 +209,7 @@ def bump_dev_pin(version: Version) -> bool:
         raise ValueError(f"Could not find the rdkit== pin in {PYPROJECT_TOML}")
     if new_content == original_content:
         return False
-    PYPROJECT_TOML.write_text(new_content, encoding="utf-8")
+    PYPROJECT_TOML.write_text(new_content)
     return True
 
 
@@ -152,8 +224,18 @@ def diff() -> None:
 
 
 def ci_matrix() -> None:
-    """Prints the valid (python-version, rdkit_version) pairs for ci.yml's tests job, as JSON."""
+    """Prints the (python-version, rdkit_version, os) triples for ci.yml's tests job, as JSON."""
     print(json.dumps(compute_ci_matrix()))  # noqa: T201
+
+
+def build_matrix() -> None:
+    """Prints the (python-version, rdkit_version) pairs release.yml's build job builds, as JSON."""
+    print(json.dumps(compute_build_matrix()))  # noqa: T201
+
+
+def missing_matrix() -> None:
+    """Prints the (python-version, rdkit_version) pairs still missing a published wheel, as JSON."""
+    print(json.dumps(missing_build_matrix()))  # noqa: T201
 
 
 def bump_pin() -> None:
@@ -162,15 +244,12 @@ def bump_pin() -> None:
     print("changed" if changed else "unchanged")  # noqa: T201
 
 
-def main() -> None:
-    """Runs the RDKit-matrix CLI."""
+if __name__ == "__main__":
     app = doctyper.DocTyper()
     app.command()(release_matrix)
     app.command()(diff)
     app.command()(ci_matrix)
+    app.command()(build_matrix)
+    app.command()(missing_matrix)
     app.command()(bump_pin)
     app()
-
-
-if __name__ == "__main__":
-    main()
