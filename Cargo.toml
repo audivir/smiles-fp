@@ -1,6 +1,6 @@
 [package]
 name = "smiles_fp"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "Rust-accelerated Tanimoto similarity search over RDKit Morgan fingerprints."
 

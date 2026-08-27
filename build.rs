@@ -9,11 +9,17 @@ fn main() {
     // to whatever `python3` resolves to on PATH for plain `cargo build`/dev flows.
     let python_exe = env::var("PYO3_PYTHON").unwrap_or_else(|_| "python3".to_string());
     let python_include_output = Command::new(&python_exe)
-        .args(["-c", "import sysconfig; print(sysconfig.get_path('include'))"])
+        .args([
+            "-c",
+            "import sysconfig; print(sysconfig.get_path('include'))",
+        ])
         .output()
         .expect("Failed to query Python include directory.");
     if !python_include_output.status.success() {
-        panic!("Failed to query Python include directory from {}.", python_exe);
+        panic!(
+            "Failed to query Python include directory from {}.",
+            python_exe
+        );
     }
     let python_include_dir = String::from_utf8_lossy(&python_include_output.stdout)
         .trim()
@@ -86,4 +92,6 @@ fn main() {
     println!("cargo:rerun-if-changed=src/lib.rs");
     println!("cargo:rerun-if-changed=src/rdkit_shim.cpp");
     println!("cargo:rerun-if-changed=smiles-fp-pypi/build_env.py");
+    println!("cargo:rerun-if-env-changed=RDKIT_VERSION");
+    println!("cargo:rerun-if-env-changed=PYTHON_VERSION");
 }

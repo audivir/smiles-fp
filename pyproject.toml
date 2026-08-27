@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "smiles-fp"
 # build_wheels.py overrides it
-version = "0.2.0"
+version = "0.2.1"
 description = "Rust-accelerated Tanimoto similarity search over RDKit Morgan fingerprints."
 authors = [{ name = "Tim Hörmann", email = "pypi@audivir.de" }]
 readme = "README.md"
