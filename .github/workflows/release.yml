@@ -22,39 +22,42 @@ jobs:
             echo "::error::Release tag $GITHUB_REF_NAME (version $tag_version) does not match Cargo.toml version ($pkg_version)"
             exit 1
           fi
-  build:
+  matrix:
     needs: check-version
+    runs-on: ubuntu-latest
+    outputs:
+      rdkit_versions: ${{ steps.matrix.outputs.rdkit_versions }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.12"
+      - id: matrix
+        # RDKit versions to build wheels for: the union of the current latest-per-series RDKit
+        # releases and any RDKit versions that already have a published smiles-fp wheel for the
+        # current Cargo.toml version. See smiles-fp-pypi/update_rdkit_matrix.py.
+        run: |
+          rdkit_versions="$(uv run --no-project --with requests --with packaging --with tomli --with doctyper python3 smiles-fp-pypi/update_rdkit_matrix.py release-matrix)"
+          echo "rdkit_versions=$rdkit_versions" >> "$GITHUB_OUTPUT"
+  build:
+    needs: matrix
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
-        # RDKit releases to build and publish wheels for.
-        rdkit_version:
-          - 2024.9.6
-          - 2025.9.3
-          - 2025.9.6
-          - 2026.3.2
+        rdkit_version: ${{ fromJson(needs.matrix.outputs.rdkit_versions) }}
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install micromamba
-        run: |
-          case "$(uname -s)-$(uname -m)" in
-            Linux-x86_64) plat=linux-64 ;;
-            Linux-aarch64) plat=linux-aarch64 ;;
-            Darwin-arm64) plat=osx-arm64 ;;
-            Darwin-x86_64) plat=osx-64 ;;
-            *) echo "::error::Unsupported platform $(uname -s)-$(uname -m)"; exit 1 ;;
-          esac
-          curl -Ls "https://micro.mamba.pm/api/micromamba/$plat/latest" | tar -xvj bin/micromamba
-          echo "$PWD/bin" >> "$GITHUB_PATH"
-      - uses: actions/setup-python@v7
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           python-version: "3.12"
-      - run: python3 -m pip install maturin requests packaging auditwheel patchelf
       - name: Build wheels for RDKit ${{ matrix.rdkit_version }}
-        run: python3 build_wheels.py ${{ matrix.rdkit_version }}
+        run: |
+          uv run --no-project --with maturin --with requests --with packaging --with tomli \
+            --with doctyper --with auditwheel --with patchelf \
+            python3 smiles-fp-pypi/build_wheels.py ${{ matrix.rdkit_version }}
       - uses: actions/upload-artifact@v7
         with:
           name: wheels-${{ matrix.os }}-${{ matrix.rdkit_version }}
@@ -72,3 +75,5 @@ jobs:
           path: dist
           merge-multiple: true
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true

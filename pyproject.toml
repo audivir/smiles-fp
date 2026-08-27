@@ -1,5 +1,5 @@
 [build-system]
-requires = ["maturin>=1.0,<2.0", "packaging"]
+requires = ["maturin>=1.0,<2.0", "packaging", "doctyper"]
 build-backend = "maturin"
 
 [project]
@@ -22,8 +22,8 @@ classifiers = [
   "Typing :: Typed",
   "Programming Language :: Rust",
 ]
-# rdkit is pinned to the project's canonical dev/CI RDKit version, build_wheels.py overrides it
-dependencies = ["joblib", "numpy", "rdkit==2026.3.2", "scipy", "tqdm"]
+# build_wheels.py overrides it
+dependencies = ["joblib", "numpy", "rdkit==2026.3.5", "scipy", "tqdm"]
 
 [project.optional-dependencies]
 
@@ -33,7 +33,19 @@ Repository = "https://github.com/audivir/smiles-fp"
 Issues = "https://github.com/audivir/smiles-fp/issues"
 
 [dependency-groups]
-dev = ["mypy", "pytest", "coverage", "prek", "ruff", "pytest-benchmark"]
+dev = [
+  "mypy",
+  "pytest",
+  "coverage",
+  "prek",
+  "ruff",
+  "pytest-benchmark",
+  "requests",
+  "tomli",
+  "packaging",
+  "maturin>=1.0,<2.0",
+  "doctyper",
+]
 
 [tool.maturin]
 python-source = "python"
@@ -52,10 +64,10 @@ warn_unreachable = true
 warn_unused_configs = true
 local_partial_types = true
 
-exclude = ["build", "docs", "OLD"]
+exclude = ["build", "docs"]
 
 [tool.coverage.run]
-source = ["tests", "smiles_fp"]
+source = ["tests", "smiles_fp", "smiles-fp-pypi"]
 command_line = "-m pytest"
 branch = true
 patch = ["subprocess"]
@@ -82,7 +94,8 @@ filterwarnings = [
   "ignore::pytest.PytestCacheWarning",
   "ignore::DeprecationWarning",
 ]
-testpaths = ["tests"]
+testpaths = ["tests", "smiles-fp-pypi/tests"]
+pythonpath = ["smiles-fp-pypi"]
 
 [tool.vulture]
 ignore_names = ["_*", "unused_*"]
@@ -93,7 +106,6 @@ verbose = false
 
 [tool.ruff]
 line-length = 100
-extend-exclude = ["OLD"]
 
 [tool.ruff.lint]
 dummy-variable-rgx = "^(dummy_.*|unused_.*|_)$"
@@ -136,7 +148,10 @@ ban-relative-imports = "all"
 # conf.py automatically created by Sphinx
 "docs/conf.py" = ["INP001", "D100", "ERA001", "A"]
 
+# smiles-fp-pypi/ is a flat script directory (hyphenated name, not a valid Python package)
+"smiles-fp-pypi/**" = ["INP001"]
+
 # Test files do not need to have docstrings at each test function
 # S101: assert, PLR2004: magic value comparison, T20: print statements
 "**/test_*.py" = ["INP001", "PLR2004", "S101", "D101", "D102", "D103", "T20"]
-"tests/**" = ["INP001", "PLR2004", "S101", "D101", "D102", "D103", "T20"]
+"**/tests/**" = ["INP001", "PLR2004", "S101", "D101", "D102", "D103", "T20"]

@@ -1,4 +1,4 @@
-"""Test and benchmark parallel similarity calculation."""
+"""Tests and benchmarks parallel similarity calculation."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ def get_sims(fps: list[ExplicitBitVect]) -> NDArray[np.float64]:
 def test_sims(
     test_fps: list[ExplicitBitVect],
 ) -> NDArray[np.float64]:
-    """Calculate similarities between the first and second half of the test fingerprints."""
+    """Calculates similarities between the first and second half of the test fingerprints."""
     return get_sims(test_fps)
 
 
@@ -40,7 +40,7 @@ def test_sims(
 def benchmark_sims(  # pragma: no cover
     benchmark_fps: list[ExplicitBitVect],
 ) -> NDArray[np.float64]:
-    """Calculate similarities between the first and second half of the test fingerprints."""
+    """Calculates similarities between the first and second half of the test fingerprints."""
     return get_sims(benchmark_fps)
 
 

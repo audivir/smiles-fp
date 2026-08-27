@@ -1,39 +1,28 @@
-"""Build the build pip wheels for different RDKit versions."""
+"""Builds the pip wheels for different RDKit versions."""
 
 from __future__ import annotations
 
-import argparse
 import logging
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
+import doctyper
 import requests
+import tomli
+from build_env import UV_EXE, find_required_exe
 from packaging.version import Version
-
-from build_env import get_conda_prog_exe, init_conda_env
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 
-PARENT = Path(__file__).parent
-CARGO_TOML = PARENT / "Cargo.toml"
-WHEEL_DIR = PARENT / "target" / "wheels"
-WORKTREE_ROOT = PARENT / ".build_cache" / "worktrees"
-
-maturin = shutil.which("maturin")
-if not maturin:
-    raise FileNotFoundError("Could not find maturin binary")
-MATURIN_EXE = maturin
+REPO_ROOT = Path(__file__).parent.parent
+CARGO_TOML = REPO_ROOT / "Cargo.toml"
+WHEEL_DIR = REPO_ROOT / "target" / "wheels"
+WORKTREE_ROOT = REPO_ROOT / ".build_cache" / "worktrees"
 
 AUDITWHEEL_EXCLUDES = ["libRDKit*", "libboost_python*"]
 
@@ -43,7 +32,7 @@ def get_cargo_version() -> Version:
     if not CARGO_TOML.exists():
         raise FileNotFoundError(f"Missing {CARGO_TOML}")
 
-    cargo_data = tomllib.loads(CARGO_TOML.read_text())
+    cargo_data = tomli.loads(CARGO_TOML.read_text())
 
     try:
         return Version(cargo_data["package"]["version"])
@@ -75,18 +64,26 @@ def get_supported_pythons(rdkit_ver: Version) -> list[Version]:
     return sorted(py_versions)
 
 
+def get_python_exe(py_ver: Version) -> str:
+    """Provisions (if needed) and locates a standalone Python interpreter via uv."""
+    subprocess.check_call([UV_EXE, "python", "install", str(py_ver)])  # noqa: S603
+    return subprocess.check_output(  # noqa: S603
+        [UV_EXE, "python", "find", str(py_ver)], text=True
+    ).strip()
+
+
 def sync_worktree(rdkit_ver: Version) -> Path:
-    """Check out a worktree mirroring the current working tree, reused across runs for caching."""
+    """Checks out a worktree mirroring the current working tree, reused across runs for caching."""
     worktree_dir = WORKTREE_ROOT / f"rdkit-{rdkit_ver}"
     snapshot_sha = subprocess.check_output(
         ["git", "stash", "create"],  # noqa: S607
-        cwd=PARENT,
+        cwd=REPO_ROOT,
         text=True,
     ).strip()
     if not snapshot_sha:
         snapshot_sha = subprocess.check_output(
             ["git", "rev-parse", "HEAD"],  # noqa: S607
-            cwd=PARENT,
+            cwd=REPO_ROOT,
             text=True,
         ).strip()
 
@@ -98,15 +95,15 @@ def sync_worktree(rdkit_ver: Version) -> Path:
         WORKTREE_ROOT.mkdir(parents=True, exist_ok=True)
         subprocess.check_call(  # noqa: S603
             ["git", "worktree", "add", "--detach", str(worktree_dir), snapshot_sha],  # noqa: S607
-            cwd=PARENT,
+            cwd=REPO_ROOT,
         )
 
     return worktree_dir
 
 
 def patch_pyproject(path: Path, version: str, py_ver_range: str, rdkit_ver: Version) -> None:
-    """Pin the wheel version, Python range, and exact RDKit dependency for one build."""
-    content = path.read_text(encoding="utf-8")
+    """Pins the wheel version, Python range, and exact RDKit dependency for one build."""
+    content = path.read_text()
     content = re.sub(r'(?m)^version = ".*"$', f'version = "{version}"', content, count=1)
     content = re.sub(
         r'(?m)^requires-python = ".*"$', f'requires-python = "{py_ver_range}"', content, count=1
@@ -116,7 +113,8 @@ def patch_pyproject(path: Path, version: str, py_ver_range: str, rdkit_ver: Vers
 
 
 def build_wheels(rdkit_ver: Version) -> None:
-    """Build all wheels for the given RDKit version."""
+    """Builds all wheels for the given RDKit version."""
+    maturin_exe = find_required_exe("maturin")
     cargo_version = get_cargo_version()
 
     safe_rdkit = str(rdkit_ver).replace("-", ".").replace("_", ".")
@@ -139,16 +137,14 @@ def build_wheels(rdkit_ver: Version) -> None:
     for py_ver in py_versions:
         logger.info("Building for Python %s", py_ver)
 
-        env_dir = (PARENT / f".conda_envs/{py_ver}").absolute()
-        init_conda_env(env_dir, py_ver)
-        py_exe = get_conda_prog_exe("python", env_dir)
+        py_exe = get_python_exe(py_ver)
 
         with tempfile.TemporaryDirectory() as tmp:
             build_out = Path(tmp) if sys.platform == "linux" else WHEEL_DIR
             try:
                 subprocess.check_call(  # noqa: S603
                     [
-                        MATURIN_EXE,
+                        maturin_exe,
                         "build",
                         "--release",
                         "--auditwheel=skip",
@@ -162,7 +158,6 @@ def build_wheels(rdkit_ver: Version) -> None:
                         **os.environ,
                         "PYTHON_VERSION": str(py_ver),
                         "RDKIT_VERSION": str(rdkit_ver),
-                        "ENV_DIR": str(env_dir),
                     },
                 )
             except subprocess.CalledProcessError as e:
@@ -177,30 +172,29 @@ def build_wheels(rdkit_ver: Version) -> None:
 
 
 def repair_linux_wheel(wheel_path: Path) -> None:
-    """Repair a maturin --auditwheel=skip wheel into a valid manylinux wheel."""
+    """Repairs a maturin --auditwheel=skip wheel into a valid manylinux wheel."""
     cmd = ["auditwheel", "repair", str(wheel_path), "--wheel-dir", str(WHEEL_DIR)]
     for lib in AUDITWHEEL_EXCLUDES:
         cmd += ["--exclude", lib]
     subprocess.check_call(cmd)  # noqa: S603
 
 
-class Namespace(argparse.Namespace):
-    """Typed argparse namespace for our wheel builder."""
+def cli(rdkit_versions: list[str]) -> None:
+    """Builds wheels for each given RDKit version.
 
-    rdkit_versions: list[Version]
+    Args:
+        rdkit_versions: RDKit releases to build wheels for, e.g. 2026.3.2 2025.9.6.
+    """
+    for rdkit_ver in rdkit_versions:
+        build_wheels(Version(rdkit_ver))
 
 
-def build_wheels_cli() -> int:
-    """Build the wheels for the RDKit version provided as CLI argument."""
-    parser = argparse.ArgumentParser()
-    parser.add_argument("rdkit_versions", nargs="*", type=Version)
-    args = parser.parse_args(namespace=Namespace)
-
-    for rdkit_ver in args.rdkit_versions:
-        build_wheels(rdkit_ver)
-
-    return 0
+def main() -> None:
+    """Runs the wheel-builder CLI."""
+    app = doctyper.DocTyper()
+    app.command()(cli)
+    app()
 
 
 if __name__ == "__main__":
-    raise SystemExit(build_wheels_cli())
+    main()

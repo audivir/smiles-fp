@@ -1,4 +1,4 @@
-"""Search for similar molecules."""
+"""Searches for similar molecules."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def windowed_bulk_tanimoto(
     n_threads: int = -1,
     agg: Literal["max", "min", "full", "mean"] | None = None,
 ) -> Generator[NDArray[np.float64]]:
-    """Yield chunked similarity matrices to prevent out-of-memory errors.
+    """Yields chunked similarity matrices to prevent out-of-memory errors.
 
     Args:
         query: Path to the query binary fingerprint file.
@@ -65,7 +65,7 @@ def similarity_search(  # noqa: PLR0913,PLR0917
     k: int = 10,
     n_threads: int = cpu_count(),
 ) -> dict[T, list[tuple[T, float]]]:
-    """Search for the top k similar fingerprints in a list of fingerprints.
+    """Searches for the top k similar fingerprints in a list of fingerprints.
 
     Args:
         query_ids: Any identifier for each query fingerprint.

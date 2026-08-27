@@ -1,4 +1,4 @@
-"""Test the helpers."""
+"""Tests the helpers."""
 
 from __future__ import annotations
 

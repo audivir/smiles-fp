@@ -49,4 +49,3 @@ env/
 
 # custom exclusions
 .build_cache/
-.conda_envs/

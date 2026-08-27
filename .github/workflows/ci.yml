@@ -10,65 +10,54 @@ concurrency:
 jobs:
   prek:
     runs-on: ubuntu-latest
-    # must stay in sync with .pre-commit-config.yaml
     env:
-      RDKIT_VERSION: 2026.3.2
       PYTHON_VERSION: "3.12"
-      ENV_DIR: .conda_envs/3.12
       UV_NO_EDITABLE: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - name: Install micromamba
-        run: |
-          case "$(uname -s)-$(uname -m)" in
-            Linux-x86_64) plat=linux-64 ;;
-            Linux-aarch64) plat=linux-aarch64 ;;
-            Darwin-arm64) plat=osx-arm64 ;;
-            Darwin-x86_64) plat=osx-64 ;;
-            *) echo "::error::Unsupported platform $(uname -s)-$(uname -m)"; exit 1 ;;
-          esac
-          curl -Ls "https://micro.mamba.pm/api/micromamba/$plat/latest" | tar -xvj bin/micromamba
-          echo "$PWD/bin" >> "$GITHUB_PATH"
       - uses: astral-sh/setup-uv@v10.0.1
         with:
           python-version: "3.12"
+      - name: Derive RDKIT_VERSION from pyproject.toml
+        run: echo "RDKIT_VERSION=$(python3 smiles-fp-pypi/dev_rdkit_version.py)" >> "$GITHUB_ENV"
       - run: uv sync --group dev
       # add mypy to path
       - run: echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - uses: j178/prek-action@v3.0.0
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      pairs: ${{ steps.matrix.outputs.pairs }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: "3.12"
+      - id: matrix
+        run: |
+          pairs="$(uv run --no-project --with requests --with packaging --with tomli --with doctyper python3 smiles-fp-pypi/update_rdkit_matrix.py ci-matrix)"
+          echo "pairs=$pairs" >> "$GITHUB_OUTPUT"
   tests:
+    needs: matrix
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        # conda-forge's boost=1.85.0 (what RDKit 2026.3.2 itself links against) has no build
-        # for 3.13/3.14; build_wheels.py's release matrix skips those combos per RDKit version.
-        python-version: ["3.10", "3.11", "3.12"]
+        pair: ${{ fromJson(needs.matrix.outputs.pairs) }}
     env:
-      RDKIT_VERSION: 2026.3.2
-      PYTHON_VERSION: ${{ matrix.python-version }}
-      ENV_DIR: .conda_envs/${{ matrix.python-version }}
+      PYTHON_VERSION: ${{ matrix.pair.python-version }}
+      RDKIT_VERSION: ${{ matrix.pair.rdkit_version }}
       UV_NO_EDITABLE: "1"
     steps:
       - uses: actions/checkout@v7
-      - name: Install micromamba
-        run: |
-          case "$(uname -s)-$(uname -m)" in
-            Linux-x86_64) plat=linux-64 ;;
-            Linux-aarch64) plat=linux-aarch64 ;;
-            Darwin-arm64) plat=osx-arm64 ;;
-            Darwin-x86_64) plat=osx-64 ;;
-            *) echo "::error::Unsupported platform $(uname -s)-$(uname -m)"; exit 1 ;;
-          esac
-          curl -Ls "https://micro.mamba.pm/api/micromamba/$plat/latest" | tar -xvj bin/micromamba
-          echo "$PWD/bin" >> "$GITHUB_PATH"
       - uses: astral-sh/setup-uv@v10.0.1
         with:
-          python-version: ${{ matrix.python-version }}
-      - run: uv sync --group dev --python ${{ matrix.python-version }}
-      - run: uv run coverage run -m pytest
-      - run: uv run coverage combine || true
-      - run: uv run coverage report
+          python-version: ${{ matrix.pair.python-version }}
+      - run: uv sync --group dev --python ${{ matrix.pair.python-version }}
+      - run: uv pip install "rdkit==$RDKIT_VERSION"
+      - run: uv run --no-sync coverage run -m pytest --benchmark-skip
+      - run: uv run --no-sync coverage combine || true
+      - run: uv run --no-sync coverage report

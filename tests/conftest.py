@@ -1,4 +1,4 @@
-"""Configure the tests and benchmarks."""
+"""Configures the tests and benchmarks."""
 
 from __future__ import annotations
 
@@ -23,8 +23,8 @@ BENCHMARK_SIZES = (2_500,)
 # n_bits = 0 fails with RDKit
 FP_SIZES = (1, 512)
 
-PARENT = Path(__file__).parent
-TEST_SMILES_PATH = PARENT / "test.smiles"
+FIXTURES = Path(__file__).parent / "fixtures"
+TEST_SMILES_PATH = FIXTURES / "test.smiles"
 
 if max(*TEST_SIZES, *BENCHMARK_SIZES) > N_SMILES:  # pragma: no cover
     raise ValueError("More SMILES requested for benchmark than processed")

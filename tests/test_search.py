@@ -1,4 +1,4 @@
-"""Test high-level search and windowing API."""
+"""Tests high-level search and windowing API."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def temp_db(tmp_path: Path) -> tuple[Path, Path]:
-    """Create temporary query and database files."""
+    """Creates temporary query and database files."""
     test_fps = list(conftest.get_cached_fps().values())[:64]
     quarter = len(test_fps) // 4
     q_path = tmp_path / "query.bin"
@@ -28,7 +28,7 @@ def temp_db(tmp_path: Path) -> tuple[Path, Path]:
 
 
 def test_similarity_search(temp_db: tuple[Path, Path]) -> None:
-    """Verify similarity_search returns correct dict structure and top-k."""
+    """Verifies similarity_search returns correct dict structure and top-k."""
     q_path, db_path = temp_db
 
     with q_path.open("rb") as f:

@@ -16,7 +16,7 @@ def save_fingerprints(
     py_fps: Sequence[ExplicitBitVect],
     filename: StrPath,
 ) -> None:
-    """Save a sequence of fingerprints to a binary file.
+    """Saves a sequence of fingerprints to a binary file.
 
     All fingerprints must have the same length.
 
@@ -28,7 +28,7 @@ def save_fingerprints(
 def load_fingerprints(
     filename: StrPath,
 ) -> list[ExplicitBitVect]:
-    """Load a sequence of fingerprints from a binary file created with `save_fingerprints`.
+    """Loads a sequence of fingerprints from a binary file created with `save_fingerprints`.
 
     Args:
         filename: The path to the binary fingerprint file.
@@ -43,7 +43,7 @@ def bulk_tanimoto_parallel(
     n_threads: int = -1,
     agg: Literal["mean", "max", "min", "full"] | None = None,
 ) -> NDArray[np.float64]:
-    """Calculate Tanimoto similarities in parallel from RDKit fingerprints.
+    """Calculates Tanimoto similarities in parallel from RDKit fingerprints.
 
     Args:
         py_fps: The first sequence of RDKit fingerprints.
@@ -62,7 +62,7 @@ def bulk_tanimoto_parallel_topk(
     k: int = 10,
     n_threads: int = -1,
 ) -> tuple[NDArray[np.uint32], NDArray[np.float64]]:
-    """Find the top-K highest similarity scores for each query in memory.
+    """Finds the top-K highest similarity scores for each query in memory.
 
     Args:
         py_fps: Sequence of fingerprints for the query.
@@ -83,7 +83,7 @@ def bulk_tanimoto_mmap(
     db_offset: int = 0,
     db_limit: int = 0,
 ) -> NDArray[np.float64]:
-    """Calculate Tanimoto similarities in parallel from binary files using memory-mapping.
+    """Calculates Tanimoto similarities in parallel from binary files using memory-mapping.
 
     Args:
         path1: Path to the query binary fingerprint file.
@@ -106,7 +106,7 @@ def bulk_tanimoto_mmap_topk(
     db_offset: int = 0,
     db_limit: int = 0,
 ) -> tuple[NDArray[np.uint32], NDArray[np.float64]]:
-    """Find the top-K highest similarity scores for each query using memory-mapping.
+    """Finds the top-K highest similarity scores for each query using memory-mapping.
 
     Args:
         path1: Path to the query binary fingerprint file.
@@ -126,7 +126,7 @@ def internal_tanimoto_parallel(
     n_threads: int = -1,
     agg: Literal["mean", "max", "min", "full"] | None = None,
 ) -> NDArray[np.float64]:
-    """Calculate internal (pairwise) similarities for a dataset in parallel.
+    """Calculates internal (pairwise) similarities for a dataset in parallel.
 
     Args:
         py_fps: The sequence of RDKit fingerprints.
@@ -145,7 +145,7 @@ def internal_tanimoto_mmap(
     n_threads: int = -1,
     agg: Literal["mean", "max", "min", "full"] | None = None,
 ) -> NDArray[np.float64]:
-    """Calculate internal (pairwise) similarities from a binary file using memory-mapping.
+    """Calculates internal (pairwise) similarities from a binary file using memory-mapping.
 
     Args:
         path: Path to the binary fingerprint file.

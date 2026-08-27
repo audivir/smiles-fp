@@ -95,8 +95,7 @@ repos:
         args: [python, tests]
       - id: clippy
         name: clippy
-        # build.rs requires these to build the RDKit/conda toolchain
-        entry: env RDKIT_VERSION=2026.3.2 PYTHON_VERSION=3.12 ENV_DIR=.conda_envs/3.12 cargo clippy --all-targets --all-features -- -D warnings
+        entry: bash -c 'RDKIT_VERSION=$(python3 smiles-fp-pypi/dev_rdkit_version.py) PYTHON_VERSION=3.12 cargo clippy --all-targets --all-features -- -D warnings'
         language: system
         types: [rust]
         require_serial: true

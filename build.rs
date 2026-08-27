@@ -1,19 +1,30 @@
 use std::env;
-use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
     let rdkit_ver = env::var("RDKIT_VERSION").unwrap();
     let python_ver = env::var("PYTHON_VERSION").unwrap();
-    let env_dir = env::var("ENV_DIR").unwrap();
+
+    // pyo3-build-config sets PYO3_PYTHON to the interpreter maturin is building for; fall back
+    // to whatever `python3` resolves to on PATH for plain `cargo build`/dev flows.
+    let python_exe = env::var("PYO3_PYTHON").unwrap_or_else(|_| "python3".to_string());
+    let python_include_output = Command::new(&python_exe)
+        .args(["-c", "import sysconfig; print(sysconfig.get_path('include'))"])
+        .output()
+        .expect("Failed to query Python include directory.");
+    if !python_include_output.status.success() {
+        panic!("Failed to query Python include directory from {}.", python_exe);
+    }
+    let python_include_dir = String::from_utf8_lossy(&python_include_output.stdout)
+        .trim()
+        .to_string();
 
     println!("cargo:warning=Building environment. This may take a moment...");
 
     let output = Command::new("python3")
-        .arg("build_env.py")
+        .arg("smiles-fp-pypi/build_env.py")
         .arg(&rdkit_ver)
         .arg(&python_ver)
-        .arg(&env_dir)
         .output()
         .expect("Failed to execute environment builder.");
 
@@ -29,20 +40,16 @@ fn main() {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut conda_include_dir = String::new();
-    let mut python_include_dir = String::new();
-    let mut rdkit_code_dir = String::new();
-    let mut rdkit_build_dir = String::new();
+    let mut boost_include_dir = String::new();
+    let mut rdkit_include_dir = String::new();
     let mut pip_lib_dir = String::new();
     let mut boost_link_name = String::new();
 
     for line in stdout.lines() {
         if let Some((key, value)) = line.split_once('=') {
             match key.trim() {
-                "CONDA_INCLUDE_DIR" => conda_include_dir = value.trim().to_string(),
-                "PYTHON_INCLUDE_DIR" => python_include_dir = value.trim().to_string(),
-                "RDKIT_CODE_DIR" => rdkit_code_dir = value.trim().to_string(),
-                "RDKIT_BUILD_DIR" => rdkit_build_dir = value.trim().to_string(),
+                "BOOST_INCLUDE_DIR" => boost_include_dir = value.trim().to_string(),
+                "RDKIT_INCLUDE_DIR" => rdkit_include_dir = value.trim().to_string(),
                 "PIP_LIB_DIR" => pip_lib_dir = value.trim().to_string(),
                 "BOOST_LINK_NAME" => boost_link_name = value.trim().to_string(),
                 _ => {}
@@ -53,11 +60,9 @@ fn main() {
     // Compile C++ Shim
     cxx_build::bridge("src/lib.rs")
         .file("src/rdkit_shim.cpp")
-        .include(&conda_include_dir) // Boost headers
+        .include(&boost_include_dir) // Boost headers (boost-headers PyPI package)
+        .include(&rdkit_include_dir) // RDKit headers (rdkit-headers PyPI package)
         .include(&python_include_dir) // Python C headers
-        .include(&rdkit_code_dir) // RDKit static headers
-        .include(&rdkit_build_dir) // RDKit generated headers
-        .include(PathBuf::from(&rdkit_code_dir).parent().unwrap())
         .flag_if_supported("-std=c++17")
         .flag_if_supported("-O3")
         .flag_if_supported("-Wno-unused-parameter")
@@ -80,5 +85,5 @@ fn main() {
     // Rebuild Triggers
     println!("cargo:rerun-if-changed=src/lib.rs");
     println!("cargo:rerun-if-changed=src/rdkit_shim.cpp");
-    println!("cargo:rerun-if-changed=auto_env_builder.py");
+    println!("cargo:rerun-if-changed=smiles-fp-pypi/build_env.py");
 }

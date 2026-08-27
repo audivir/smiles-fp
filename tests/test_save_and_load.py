@@ -1,4 +1,4 @@
-"""Test and benchmark saving and loading."""
+"""Tests and benchmarks saving and loading."""
 
 from __future__ import annotations
 

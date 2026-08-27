@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 
 def to_matrix(vector: NDArray[np.float64], n: int, diagonal: float = 0.0) -> NDArray[np.float64]:
-    """Convert condensed distance vector to its corresponding matrix.
+    """Converts a condensed distance vector to its corresponding matrix.
 
     Args:
         vector: The condensed 1D distance vector
@@ -47,7 +47,7 @@ def to_matrix(vector: NDArray[np.float64], n: int, diagonal: float = 0.0) -> NDA
 
 
 def mol_from_smi(smi: str) -> Chem.Mol:
-    """Convert a SMILES string to a RDKit molecule.
+    """Converts a SMILES string to a RDKit molecule.
 
     Args:
         smi: SMILES to convert.
@@ -65,7 +65,7 @@ def mol_from_smi(smi: str) -> Chem.Mol:
 
 
 def get_mols(smis: Iterable[str], n_jobs: int = -1, verbose: bool = False) -> list[Chem.Mol]:
-    """Convert a batch of SMILES strings to RDKit molecules.
+    """Converts a batch of SMILES strings to RDKit molecules.
 
     Args:
         smis: Iterable of SMILES strings to convert.
@@ -96,7 +96,7 @@ def get_mols(smis: Iterable[str], n_jobs: int = -1, verbose: bool = False) -> li
 def get_morgan_fps(
     mols: Sequence[ExplicitBitVect], radius: int = 2, n_bits: int = 2048, n_threads: int = -1
 ) -> tuple[ExplicitBitVect, ...]:
-    """Convert RDKit molecules to Morgan fingerprints.
+    """Converts RDKit molecules to Morgan fingerprints.
 
     Args:
         mols: A sequence of RDKit molecules.
