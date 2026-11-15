@@ -108,7 +108,9 @@ def _fp(smi: str, n_bits: int) -> ExplicitBitVect:
     from rdkit import Chem
     from rdkit.Chem import rdFingerprintGenerator as rdFPGen
 
-    return rdFPGen.GetMorganGenerator(radius=2, fpSize=n_bits).GetFingerprint(Chem.MolFromSmiles(smi))
+    return rdFPGen.GetMorganGenerator(radius=2, fpSize=n_bits).GetFingerprint(  # type: ignore[no-any-return]
+        Chem.MolFromSmiles(smi)
+    )
 
 
 def test_save_fingerprints_unwritable_path_raises(tmp_path: Path) -> None:

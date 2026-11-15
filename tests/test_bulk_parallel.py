@@ -309,14 +309,16 @@ def _bit_vect(n_bits: int) -> ExplicitBitVect:
     from rdkit import Chem
     from rdkit.Chem import rdFingerprintGenerator as rdFPGen
 
-    return rdFPGen.GetMorganGenerator(radius=2, fpSize=n_bits).GetFingerprint(Chem.MolFromSmiles("CCO"))
+    return rdFPGen.GetMorganGenerator(radius=2, fpSize=n_bits).GetFingerprint(  # type: ignore[no-any-return]
+        Chem.MolFromSmiles("CCO")
+    )
 
 
 @pytest.mark.parametrize("func", ["bulk", "bulk_topk", "internal"])
 def test_parallel_invalid_input_raises_instead_of_empty_result(func: str) -> None:
     mixed = [_bit_vect(512), _bit_vect(1024)]
     good = [_bit_vect(512)]
-    with pytest.raises(ValueError, match="Inconsistent fingerprint lengths"):
+    with pytest.raises(ValueError, match="Inconsistent fingerprint lengths"):  # noqa: PT012
         if func == "bulk":
             smiles_fp.bulk_tanimoto_parallel(mixed, good)
         elif func == "bulk_topk":
@@ -332,7 +334,7 @@ def test_mmap_truncated_file_raises(func: str, tmp_path: Path) -> None:
     path = tmp_path / "fps.bin"
     smiles_fp.save_fingerprints([_bit_vect(512), _bit_vect(512)], path)
     path.write_bytes(path.read_bytes()[:-8])
-    with pytest.raises(ValueError, match="truncated"):
+    with pytest.raises(ValueError, match="truncated"):  # noqa: PT012
         if func == "bulk":
             smiles_fp.bulk_tanimoto_mmap(path, path)
         elif func == "bulk_topk":
