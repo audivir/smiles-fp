@@ -1,6 +1,8 @@
 #include "smiles_fp/src/rdkit_shim.h"
 
 #include <DataStructs/ExplicitBitVect.h>
+#include <GraphMol/Fingerprints/FingerprintGenerator.h>
+#include <GraphMol/Fingerprints/MorganGenerator.h>
 #include <GraphMol/ROMol.h>
 #include <GraphMol/RWMol.h>
 #include <GraphMol/SmilesParse/SmilesParse.h>
@@ -267,4 +269,35 @@ size_t clone_mol_raw(size_t mol_ptr) {
 
 void free_mol_raw(size_t mol_ptr) {
   delete reinterpret_cast<RDKit::ROMol*>(mol_ptr);
+}
+
+size_t make_morgan_generator(uint32_t radius, uint32_t n_bits) {
+  // these options and the default atom invariants match `GetMorganGenerator` in Python.
+  return reinterpret_cast<size_t>(
+      RDKit::MorganFingerprint::getMorganGenerator<std::uint64_t>(
+          radius, /*countSimulation=*/false, /*includeChirality=*/false,
+          /*useBondTypes=*/true, /*onlyNonzeroInvariants=*/false,
+          /*atomInvariantsGenerator=*/nullptr, /*bondInvariantsGenerator=*/nullptr,
+          n_bits));
+}
+
+void free_morgan_generator(size_t generator) {
+  delete reinterpret_cast<RDKit::FingerprintGenerator<std::uint64_t>*>(generator);
+}
+
+int32_t smiles_to_fp_blocks(size_t generator, rust::Str smiles, rust::Slice<uint64_t> out) {
+  try {
+    std::string smi(smiles.data(), smiles.size());
+    std::unique_ptr<RDKit::RWMol> mol(RDKit::SmilesToMol(smi));
+    if (!mol) return 1;
+    auto* gen = reinterpret_cast<const RDKit::FingerprintGenerator<std::uint64_t>*>(generator);
+    std::unique_ptr<ExplicitBitVect> fp(gen->getFingerprint(*mol));
+    std::vector<boost::dynamic_bitset<>::block_type> blocks;
+    boost::to_block_range(*(fp->dp_bits), std::back_inserter(blocks));
+    if (blocks.size() != out.size()) return 1;
+    std::copy(blocks.begin(), blocks.end(), out.begin());
+    return 0;
+  } catch (...) {
+    return 1;
+  }
 }

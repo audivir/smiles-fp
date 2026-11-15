@@ -161,6 +161,30 @@ def internal_tanimoto_mmap(
         Otherwise, returns a 1D array of the aggregated similarity scores.
     """
 
+def save_morgan_fps_from_smiles(
+    smiles: Sequence[str],
+    filename: StrPath,
+    radius: int = 2,
+    n_bits: int = 2048,
+    *,
+    n_threads: int = -1,
+) -> None:
+    """Computes Morgan fingerprints of SMILES multi-threaded and saves them to a binary file.
+
+    Equivalent to `mols_from_smiles`, `rdFingerprintGenerator.GetMorganGenerator`, and
+    `save_fingerprints`, but without creating Python objects, which keeps memory low.
+
+    Args:
+        smiles: Sequence of SMILES strings to parse and sanitize.
+        filename: The path to the output file.
+        radius: Radius of the fingerprint.
+        n_bits: Size of the fingerprint.
+        n_threads: The number of threads to use. Defaults to -1 (auto-detect).
+
+    Raises:
+        ValueError: If a SMILES is invalid (no file is written) or `n_bits` is zero.
+    """
+
 def mols_from_smiles(
     smiles: Sequence[str],
     sanitize: bool = True,

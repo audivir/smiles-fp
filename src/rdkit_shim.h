@@ -35,6 +35,15 @@ MolPtrs extract_mol_ptrs(size_t py_seq_ptr);
 // generator of RDKit is global and not thread-safe.
 rust::String mol_to_smiles_raw(size_t mol_ptr, const SmilesOpts& opts);
 
+// Creates a Morgan fingerprint generator that all threads share read-only. Returns it as an
+// integer, which the caller frees with `free_morgan_generator`.
+size_t make_morgan_generator(uint32_t radius, uint32_t n_bits);
+void free_morgan_generator(size_t generator);
+// Parses and sanitizes one SMILES, fingerprints it, and writes the 64-bit blocks of the
+// fingerprint into `out` without touching the Python API, so it is thread-safe. Returns 0 on
+// success and 1 if the SMILES is invalid or the fingerprint cannot be computed.
+int32_t smiles_to_fp_blocks(size_t generator, rust::Str smiles, rust::Slice<uint64_t> out);
+
 // Returns an owning deep copy of a molecule without touching the Python API. The caller frees it
 // with `free_mol_raw`.
 size_t clone_mol_raw(size_t mol_ptr);

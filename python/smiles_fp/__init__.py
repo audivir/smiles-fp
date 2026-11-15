@@ -15,6 +15,7 @@ from smiles_fp._smiles_fp import (
     load_fingerprints,
     mols_from_smiles,
     mols_to_smiles,
+    save_morgan_fps_from_smiles,
 )
 from smiles_fp.helpers import (
     get_mols,
@@ -41,6 +42,7 @@ __all__ = [
     "mols_from_smiles",
     "mols_to_smiles",
     "save_fingerprints",
+    "save_morgan_fps_from_smiles",
     "similarity_search",
     "to_matrix",
     "windowed_bulk_tanimoto",

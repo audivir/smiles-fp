@@ -13,7 +13,7 @@ use std::{
     cmp::Reverse,
     collections::{BinaryHeap, HashMap},
     fs::File,
-    io::Read,
+    io::{BufWriter, Read, Write},
     path::PathBuf,
 };
 
@@ -126,6 +126,9 @@ mod ffi {
         fn mol_to_smiles_raw(mol_ptr: usize, opts: &SmilesOpts) -> Result<String>;
         fn clone_mol_raw(mol_ptr: usize) -> Result<usize>;
         fn free_mol_raw(mol_ptr: usize);
+        fn make_morgan_generator(radius: u32, n_bits: u32) -> Result<usize>;
+        fn free_morgan_generator(generator: usize);
+        fn smiles_to_fp_blocks(generator: usize, smiles: &str, out: &mut [u64]) -> i32;
     }
 }
 
@@ -523,6 +526,66 @@ fn load_fingerprints<'py>(
 
     let py_list = unsafe { Bound::from_owned_ptr(py, ptr_val as *mut pyo3::ffi::PyObject) };
     Ok(py_list.into_any())
+}
+
+/// Computes Morgan fingerprints of SMILES strings on real threads and saves them to a file.
+///
+/// No Python objects are created, so memory stays at the size of the fingerprints.
+///
+/// # Errors
+///
+/// Returns `Err` if a SMILES cannot be parsed, naming the first one, or if the file cannot be
+/// written. No file is left behind on failure.
+#[pyfunction]
+#[pyo3(signature = (smiles, path, radius=2, n_bits=2048, *, n_threads=-1))]
+fn save_morgan_fps_from_smiles(
+    py: Python<'_>,
+    smiles: Vec<String>,
+    path: PathBuf,
+    radius: u32,
+    n_bits: u32,
+    n_threads: i32,
+) -> PyResult<()> {
+    if n_bits == 0 {
+        return Err(PyValueError::new_err("n_bits must be positive"));
+    }
+    let n_fps = u32::try_from(smiles.len()).map_err(|_| {
+        PyValueError::new_err("Too many fingerprints for the file format (max 2^32-1)")
+    })?;
+    let n_blocks = (n_bits as usize).div_ceil(64);
+    let pool = setup_local_pool(n_threads).map_err(PyRuntimeError::new_err)?;
+    let generator = ffi::make_morgan_generator(radius, n_bits)
+        .map_err(|e| PyRuntimeError::new_err(e.what().to_string()))?;
+
+    let mut blocks = vec![0u64; smiles.len() * n_blocks];
+    let failed: Vec<bool> = run_pool(py, &pool, || {
+        blocks
+            .par_chunks_mut(n_blocks)
+            .zip(smiles.par_iter())
+            .map(|(out, smi)| ffi::smiles_to_fp_blocks(generator, smi, out) != 0)
+            .collect()
+    });
+    ffi::free_morgan_generator(generator);
+    if let Some(i) = failed.iter().position(|&f| f) {
+        return Err(PyValueError::new_err(format!(
+            "Could not convert SMILES {i}: {}",
+            smiles[i]
+        )));
+    }
+
+    let write = || -> std::io::Result<()> {
+        let mut out = BufWriter::new(File::create(&path)?);
+        out.write_all(&n_fps.to_le_bytes())?;
+        out.write_all(&(if n_fps == 0 { 0 } else { n_bits }).to_le_bytes())?;
+        for block in &blocks {
+            out.write_all(&block.to_le_bytes())?;
+        }
+        out.flush()
+    };
+    write().inspect_err(|_| {
+        let _ = std::fs::remove_file(&path);
+    })?;
+    Ok(())
 }
 
 /// Target number of write units per thread before `mols_to_smiles` stops splitting molecules.
@@ -984,6 +1047,7 @@ fn _smiles_fp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(load_fingerprints, m)?)?;
     m.add_function(wrap_pyfunction!(mols_from_smiles, m)?)?;
     m.add_function(wrap_pyfunction!(mols_to_smiles, m)?)?;
+    m.add_function(wrap_pyfunction!(save_morgan_fps_from_smiles, m)?)?;
     m.add_function(wrap_pyfunction!(bulk_tanimoto_parallel, m)?)?;
     m.add_function(wrap_pyfunction!(bulk_tanimoto_parallel_topk, m)?)?;
     m.add_function(wrap_pyfunction!(bulk_tanimoto_mmap, m)?)?;
