@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Sequence
-from typing import Any, overload, override
+from typing import Any, overload
 
 import conftest
 import pytest
 import smiles_fp
 from rdkit import Chem
+from typing_extensions import override
 
 SMILES = list(conftest.get_cached_mols())[:300]
 
@@ -198,6 +199,16 @@ def test_mols_to_smiles_few_molecules_many_roots_uses_copies(n_threads: int) -> 
     roots[::7] = [None] * len(roots[::7])
     got = smiles_fp.mols_to_smiles(mols, rooted_at_atom=roots, n_threads=n_threads)
     assert got == _expected_rooted(mols, roots)
+
+
+@pytest.mark.parametrize("n_threads", [1, 3, 32])
+def test_mols_to_smiles_single_molecule_all_roots_matches_rdkit(n_threads: int) -> None:
+    peptide = Chem.MolFromSmiles("NCC(=O)" * 12 + "O")
+    roots = list(range(peptide.GetNumAtoms()))
+    got = smiles_fp.mols_to_smiles(
+        [peptide] * len(roots), rooted_at_atom=roots, n_threads=n_threads
+    )
+    assert got == [Chem.MolToSmiles(peptide, rootedAtAtom=r) for r in roots]
 
 
 def test_mols_to_smiles_rooted_at_atom_length_mismatch_raises() -> None:

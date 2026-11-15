@@ -192,7 +192,10 @@ def mols_to_smiles(
 ) -> list[str]:
     """Writes SMILES for RDKit molecules multi-threaded.
 
-    Input molecules must not be modified by another GIL-released RDKit function during conversion.
+    Holds the GIL, so other Python threads cannot modify the molecules. A GIL-released RDKit
+    function running on them in another thread (e.g. `GetFingerprints`) is not blocked, so the
+    molecules must not be modified by it during conversion. RDKit logging redirected to Python
+    (e.g. `rdBase.LogToPythonLogger`) can deadlock, as a worker thread that logs waits for the GIL.
     `doRandom` is not supported because RDKit's random generator is global and not thread-safe.
     A molecule that appears several times is converted once per distinct `rooted_at_atom`,
     and re-written at each position.

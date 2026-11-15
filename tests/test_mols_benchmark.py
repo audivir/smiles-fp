@@ -117,3 +117,24 @@ def test_benchmark_mols_to_smiles(  # pragma: no cover
     smis = benchmark(smiles_fp.mols_to_smiles, benchmark_mols, n_threads=n_threads)
 
     assert smis == serial_write(benchmark_mols)
+
+
+@pytest.mark.parametrize(
+    "n_threads", [0, *THREADS], ids=["rdkit_serial", *(f"{n}" for n in THREADS)]
+)
+def test_benchmark_mols_to_smiles_few_molecules_all_roots(  # pragma: no cover
+    n_threads: int, benchmark: BenchmarkFixture
+) -> None:
+    peptides = [Chem.MolFromSmiles("NCC(=O)" * n + "O") for n in (40, 30)]
+    mols = [m for m in peptides for _ in range(m.GetNumAtoms())]
+    roots = [r for m in peptides for r in range(m.GetNumAtoms())]
+    expected = [Chem.MolToSmiles(m, rootedAtAtom=r) for m, r in zip(mols, roots, strict=True)]
+
+    if n_threads == 0:
+        smis = benchmark(
+            lambda: [Chem.MolToSmiles(m, rootedAtAtom=r) for m, r in zip(mols, roots, strict=True)]
+        )
+    else:
+        smis = benchmark(smiles_fp.mols_to_smiles, mols, rooted_at_atom=roots, n_threads=n_threads)
+
+    assert smis == expected

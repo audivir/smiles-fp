@@ -572,7 +572,7 @@ fn parse_roots(arg: Option<&Bound<'_, PyAny>>, n: usize) -> PyResult<Vec<i32>> {
     Ok(roots.into_iter().map(|r| r.unwrap_or(-1)).collect())
 }
 
-/// Writes SMILES for every molecule on real threads with GIL released.
+/// Writes SMILES for every molecule on real threads with GIL held.
 ///
 /// The `doRandom` option is unsupported because the random generator of RDKit is global and not
 /// thread-safe.
@@ -605,14 +605,14 @@ fn mols_to_smiles<'py>(
     let pool = setup_local_pool(n_threads).map_err(PyRuntimeError::new_err)?;
     let batch =
         ffi::extract_mol_ptrs(mols.as_ptr() as usize).map_err(|e| ffi_error(py, e, false))?;
-    // owns the reference that keeps all molecules alive while GIL is released.
+    // owns the reference to the molecule sequence until all SMILES are written.
     let keepalive: Bound<'py, PyAny> =
         unsafe { Bound::from_owned_ptr(py, batch.keepalive as *mut pyo3::ffi::PyObject) };
     let roots = parse_roots(rooted_at_atom, batch.ptrs.len())?;
 
-    // `MolToSmiles` aborts or segfaults when threads share one `ROMol`, so each distinct molecule is
-    // one task for one thread. That thread writes every distinct root requested for the molecule,
-    // and results are fanned out to all positions.
+    // `MolToSmiles` aborts or segfaults when threads share one `ROMol`, so each distinct molecule
+    // is one task for one thread. That thread writes every distinct root requested for the
+    // molecule, and results are fanned out to all positions.
     let mut task_of: HashMap<usize, usize> = HashMap::with_capacity(batch.ptrs.len());
     let mut cell_of: HashMap<(usize, i32), usize> = HashMap::new();
     let mut tasks: Vec<(usize, Vec<i32>)> = Vec::new();
@@ -662,7 +662,8 @@ fn mols_to_smiles<'py>(
             });
         }
     }
-    let written: Vec<Vec<WrittenItem>> = run_pool(py, &pool, || {
+    // the GIL stays held, so no other Python thread can modify the molecules during the write.
+    let written: Vec<Vec<WrittenItem>> = pool.install(|| {
         // each unit owns its `ROMol`, so no two threads touch the same one.
         units
             .par_iter()
