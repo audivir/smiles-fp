@@ -12,6 +12,7 @@ from smiles_fp.helpers import mol_from_smi
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
+    from pathlib import Path
 
     from pytest_benchmark.fixture import BenchmarkFixture
 
@@ -68,6 +69,30 @@ def test_benchmark_mols_from_smiles(  # pragma: no cover
     mols = benchmark(smiles_fp.mols_from_smiles, benchmark_smis, n_threads=n_threads)
 
     assert [Chem.MolToSmiles(m) for m in mols if m] == serial_write(benchmark_mols)
+
+
+@pytest.mark.parametrize("n_threads", THREADS)
+def test_benchmark_multithreaded_smiles_mol_supplier(  # pragma: no cover
+    n_threads: int,
+    benchmark_smis: list[str],
+    benchmark_mols: list[Chem.Mol],
+    benchmark: BenchmarkFixture,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "smis.smi"
+    path.write_text("\n".join(benchmark_smis) + "\n")
+
+    def read() -> list[Chem.Mol]:
+        supplier = Chem.MultithreadedSmilesMolSupplier(
+            str(path), titleLine=False, nameColumn=-1, numWriterThreads=n_threads
+        )
+        # the supplier yields a few trailing None entries.
+        return [mol for mol in supplier if mol is not None]  # type: ignore[redundant-expr]
+
+    mols = benchmark(read)
+
+    # the supplier does not guarantee the input order.
+    assert sorted(Chem.MolToSmiles(m) for m in mols) == sorted(serial_write(benchmark_mols))
 
 
 @pytest.mark.parametrize(
