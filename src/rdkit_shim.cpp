@@ -4,7 +4,10 @@
 
 #include <boost/dynamic_bitset.hpp>
 #include <boost/python.hpp>
+#include <cstdio>
 #include <fstream>
+#include <limits>
+#include <stdexcept>
 
 #if defined(__GNUC__) || defined(__clang__)
 #define ALWAYS_INLINE __attribute__((always_inline)) inline
@@ -15,6 +18,12 @@
 #endif
 
 namespace py = boost::python;
+
+// Thrown after a Python exception has been set (and deliberately NOT cleared). The Rust side
+// fetches it with PyErr::take, so the caller sees the original exception type and message.
+struct PythonErrorPending : std::runtime_error {
+  PythonErrorPending() : std::runtime_error("Python exception pending") {}
+};
 
 struct PySequenceData {
   py::object obj;    // Keeps the Python sequence alive!
@@ -46,62 +55,78 @@ ALWAYS_INLINE PySequenceData extract_sequence_data(size_t py_list_ptr) {
 void write_rdkit_bit_vects_to_file(size_t py_list_ptr, rust::Str filename) {
   std::string fname(filename.data(), filename.size());
   std::ofstream fout(fname, std::ios::binary);
+  if (!fout.is_open()) {
+    throw std::runtime_error("Could not open '" + fname + "' for writing");
+  }
+
+  // Any failure below must not leave a truncated file that looks valid.
+  auto discard_partial_file = [&]() {
+    fout.close();
+    std::remove(fname.c_str());
+  };
 
   try {
-    if (!fout.is_open()) {
-      PyErr_SetString(PyExc_ValueError, "Inconsistent fingerprint lengths");
-      throw py::error_already_set();
-    }
-
     PySequenceData seq_data = extract_sequence_data(py_list_ptr);
+
+    if (seq_data.len > static_cast<Py_ssize_t>(std::numeric_limits<uint32_t>::max())) {
+      throw std::runtime_error("Too many fingerprints for the file format (max 2^32-1)");
+    }
 
     if (seq_data.n_fps == 0) {
       char zeros[8] = {0};
       fout.write(zeros, 8);
-      fout.close();
-      return;
-    }
+    } else {
+      // Extract first fingerprint to get bit length
+      py::extract<ExplicitBitVect&> first_extractor(seq_data.items[0]);
+      ExplicitBitVect& first_fp = first_extractor();
+      uint32_t n_bits = first_fp.getNumBits();
 
-    // Extract first fingerprint to get bit length
-    py::extract<ExplicitBitVect&> first_extractor(seq_data.items[0]);
-    ExplicitBitVect& first_fp = first_extractor();
-    uint32_t n_bits = first_fp.getNumBits();
+      fout.write(reinterpret_cast<const char*>(&seq_data.n_fps),
+                 sizeof(seq_data.n_fps));
+      fout.write(reinterpret_cast<const char*>(&n_bits), sizeof(n_bits));
 
-    fout.write(reinterpret_cast<const char*>(&seq_data.n_fps),
-               sizeof(seq_data.n_fps));
-    fout.write(reinterpret_cast<const char*>(&n_bits), sizeof(n_bits));
+      std::vector<boost::dynamic_bitset<>::block_type> buffer;
 
-    std::vector<boost::dynamic_bitset<>::block_type> buffer;
+      for (Py_ssize_t i = 0; i < seq_data.len; ++i) {
+        py::extract<ExplicitBitVect&> extractor(seq_data.items[i]);
+        ExplicitBitVect& fp = extractor();
 
-    // Loop and reuse buffer just like your pure C++ version
-    for (Py_ssize_t i = 0; i < seq_data.len; ++i) {
-      py::extract<ExplicitBitVect&> extractor(seq_data.items[i]);
-      ExplicitBitVect& fp = extractor();
+        if (fp.getNumBits() != n_bits) {
+          PyErr_SetString(PyExc_ValueError, "Inconsistent fingerprint lengths");
+          throw py::error_already_set();
+        }
 
-      if (fp.getNumBits() != n_bits) {
-        PyErr_SetString(PyExc_ValueError, "Inconsistent fingerprint lengths");
-        throw py::error_already_set();
+        buffer.clear();
+        boost::to_block_range(*(fp.dp_bits), std::back_inserter(buffer));
+
+        fout.write(reinterpret_cast<const char*>(buffer.data()),
+                   buffer.size() * sizeof(buffer[0]));
       }
-
-      buffer.clear();
-      boost::to_block_range(*(fp.dp_bits), std::back_inserter(buffer));
-
-      fout.write(reinterpret_cast<const char*>(buffer.data()),
-                 buffer.size() * sizeof(buffer[0]));
     }
 
     fout.close();
+    if (fout.fail()) {
+      throw std::runtime_error("Failed writing '" + fname + "' (disk full?)");
+    }
   } catch (const py::error_already_set&) {
-    PyErr_Print();
-    PyErr_Clear();
+    discard_partial_file();
+    throw PythonErrorPending();
+  } catch (...) {
+    discard_partial_file();
+    throw;
   }
 }
 
 FpBatch extract_rdkit_bit_vects(size_t py_list_ptr) {
   FpBatch result;
+  result.n_fps = 0;
+  result.n_bits = 0;
 
   try {
     PySequenceData seq_data = extract_sequence_data(py_list_ptr);
+    if (seq_data.len > static_cast<Py_ssize_t>(std::numeric_limits<uint32_t>::max())) {
+      throw std::runtime_error("Too many fingerprints (max 2^32-1)");
+    }
     result.n_fps = seq_data.n_fps;
 
     for (Py_ssize_t i = 0; i < seq_data.len; ++i) {
@@ -114,32 +139,29 @@ FpBatch extract_rdkit_bit_vects(size_t py_list_ptr) {
       if (i == 0) {
         result.n_bits = fp.getNumBits();
       } else if (result.n_bits != fp.getNumBits()) {
-        // Raise descriptive error instead of soft failing
         PyErr_SetString(PyExc_ValueError, "Inconsistent fingerprint lengths");
         throw py::error_already_set();
       }
       for (uint64_t b : blocks) result.data.push_back(b);
     }
   } catch (const py::error_already_set&) {
-    PyErr_Print();
-    PyErr_Clear();
-    // Return empty on failure
-    result.n_fps = 0;
-    result.n_bits = 0;
-    result.data.clear();
+    // Do not return an empty batch: callers would treat it as "no fingerprints".
+    throw PythonErrorPending();
   }
   return result;
 }
 
 size_t create_rdkit_bit_vects(uint32_t n_fps, uint32_t n_bits,
                               rust::Slice<const uint64_t> blocks) {
+  PyObject* py_list = PyList_New(n_fps);
+  if (!py_list) return 0;  // MemoryError is already set
+
   try {
-    PyObject* py_list = PyList_New(n_fps);
-    uint32_t n_blocks = (n_bits + 63) / 64;
+    const size_t n_blocks = (static_cast<size_t>(n_bits) + 63) / 64;
 
     ExplicitBitVect empty_bv(n_bits);
 
-    for (uint32_t i = 0; i < n_fps; ++i) {
+    for (size_t i = 0; i < n_fps; ++i) {
       auto start = blocks.begin() + (i * n_blocks);
 
       ExplicitBitVect fp(n_bits);
@@ -155,8 +177,12 @@ size_t create_rdkit_bit_vects(uint32_t n_fps, uint32_t n_bits,
     }
     return reinterpret_cast<size_t>(py_list);
   } catch (const py::error_already_set&) {
-    PyErr_Print();
-    PyErr_Clear();
+    // Leave the Python error set for the caller; do not leak the half-built list.
+    Py_DECREF(py_list);
+    return 0;
+  } catch (const std::exception& e) {
+    Py_DECREF(py_list);
+    PyErr_SetString(PyExc_RuntimeError, e.what());
     return 0;
   }
 }

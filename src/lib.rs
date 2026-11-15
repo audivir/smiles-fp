@@ -4,7 +4,7 @@ use numpy::{
     ndarray::{Array1, Array2},
 };
 use pyo3::{
-    exceptions::{PyRuntimeError, PyValueError},
+    exceptions::{PyOSError, PyRuntimeError, PyValueError},
     prelude::*,
     types::{PyAny, PyList, PyModule, PySequence, PyTuple},
 };
@@ -90,17 +90,32 @@ mod ffi {
     unsafe extern "C++" {
         include!("smiles_fp/src/rdkit_shim.h");
 
-        fn write_rdkit_bit_vects_to_file(py_list_ptr: usize, filename: &str);
-        fn extract_rdkit_bit_vects(py_list_ptr: usize) -> FpBatch;
+        fn write_rdkit_bit_vects_to_file(py_list_ptr: usize, filename: &str) -> Result<()>;
+        fn extract_rdkit_bit_vects(py_list_ptr: usize) -> Result<FpBatch>;
         fn create_rdkit_bit_vects(n_fps: u32, n_bits: u32, blocks: &[u64]) -> usize;
     }
 }
 
+/// Turns a C++ exception into a Python error. If the C++ side left a Python exception pending
+/// (it throws `PythonErrorPending` for that), that exact exception is returned.
+fn ffi_error(py: Python<'_>, e: cxx::Exception, os_error: bool) -> PyErr {
+    if let Some(err) = PyErr::take(py) {
+        return err;
+    }
+    let msg = e.what().to_string();
+    if os_error {
+        PyOSError::new_err(msg)
+    } else {
+        PyRuntimeError::new_err(msg)
+    }
+}
+
 impl FpBatch {
-    /// Extract the Rust struct from the Python sequence
+    /// Extract the Rust struct from the Python sequence, raising on invalid input
     #[inline(always)]
-    fn from_py_seq(py_seq: &Bound<'_, PySequence>) -> Self {
-        ffi::extract_rdkit_bit_vects(py_seq.as_ptr() as usize)
+    fn from_py_seq(py_seq: &Bound<'_, PySequence>) -> PyResult<Self> {
+        let py = py_seq.py();
+        ffi::extract_rdkit_bit_vects(py_seq.as_ptr() as usize).map_err(|e| ffi_error(py, e, false))
     }
 }
 
@@ -164,6 +179,20 @@ fn setup_mmap<'py>(
     }
 
     let n_bits = u32::from_le_bytes(mmap[4..8].try_into().unwrap()) as usize;
+
+    // The slices built later trust the header, so a truncated or corrupt file must be rejected
+    // here instead of reading past the end of the mapping.
+    let expected_len = get_n_blocks(n_bits)
+        .checked_mul(total_n_fps)
+        .and_then(|n| n.checked_mul(8))
+        .and_then(|n| n.checked_add(8));
+    if expected_len.is_none_or(|expected| mmap.len() < expected) {
+        return Err(PyValueError::new_err(format!(
+            "Corrupt or truncated fingerprint file: header declares {total_n_fps} fingerprints of \
+             {n_bits} bits, but the file has only {} bytes",
+            mmap.len()
+        )));
+    }
 
     let start_index = db_offset.min(total_n_fps);
     let n_fps = if db_limit == 0 {
@@ -408,10 +437,13 @@ fn pooled_internal_similarity<'py>(
 
 #[pyfunction]
 fn save_fingerprints<'py>(fps: &Bound<'py, PySequence>, path: &Bound<'py, PyAny>) -> PyResult<()> {
+    let py = fps.py();
     let path_buf: PathBuf = path.extract()?;
-    let path_str = path_buf.to_string_lossy();
-    ffi::write_rdkit_bit_vects_to_file(fps.as_ptr() as usize, &path_str);
-    Ok(())
+    let path_str = path_buf
+        .to_str()
+        .ok_or_else(|| PyValueError::new_err("path is not valid UTF-8"))?;
+    ffi::write_rdkit_bit_vects_to_file(fps.as_ptr() as usize, path_str)
+        .map_err(|e| ffi_error(py, e, true))
 }
 
 #[pyfunction]
@@ -432,16 +464,25 @@ fn load_fingerprints<'py>(
         return Ok(PyList::empty(py).into_any());
     }
 
-    let mut data = vec![0u64; (n_fps * n_blocks) as usize];
+    let n_words = (n_fps as usize) * (n_blocks as usize);
+    let expected_len = n_words.checked_mul(8).and_then(|n| n.checked_add(8));
+    if expected_len.is_none_or(|expected| file.metadata().map_or(true, |m| m.len() < expected as u64)) {
+        return Err(PyValueError::new_err(format!(
+            "Corrupt or truncated fingerprint file: header declares {n_fps} fingerprints of \
+             {n_bits} bits"
+        )));
+    }
+
+    let mut data = vec![0u64; n_words];
     let bytes =
         unsafe { std::slice::from_raw_parts_mut(data.as_mut_ptr() as *mut u8, data.len() * 8) };
     file.read_exact(bytes)?;
 
     let ptr_val = ffi::create_rdkit_bit_vects(n_fps, n_bits, &data);
     if ptr_val == 0 {
-        return Err(PyRuntimeError::new_err(
-            "Failed to construct fingerprints in C++",
-        ));
+        return Err(PyErr::take(py).unwrap_or_else(|| {
+            PyRuntimeError::new_err("Failed to construct fingerprints in C++")
+        }));
     }
 
     let py_list = unsafe { Bound::from_owned_ptr(py, ptr_val as *mut pyo3::ffi::PyObject) };
@@ -458,8 +499,8 @@ fn bulk_tanimoto_parallel<'py>(
     agg: Option<String>,
 ) -> PyResult<Bound<'py, PyAny>> {
     let agg = parse_agg(agg)?;
-    let fps1 = FpBatch::from_py_seq(py_fps);
-    let fps2 = FpBatch::from_py_seq(py_fps2);
+    let fps1 = FpBatch::from_py_seq(py_fps)?;
+    let fps2 = FpBatch::from_py_seq(py_fps2)?;
 
     let n_fps1 = fps1.n_fps as usize;
     let n_fps2 = fps2.n_fps as usize;
@@ -499,8 +540,8 @@ fn bulk_tanimoto_parallel_topk<'py>(
     k: usize,
     n_threads: i32,
 ) -> PyResult<Bound<'py, PyAny>> {
-    let fps1 = FpBatch::from_py_seq(py_fps);
-    let fps2 = FpBatch::from_py_seq(py_fps2);
+    let fps1 = FpBatch::from_py_seq(py_fps)?;
+    let fps2 = FpBatch::from_py_seq(py_fps2)?;
 
     let n_fps1 = fps1.n_fps as usize;
     let n_fps2 = fps2.n_fps as usize;
@@ -641,7 +682,7 @@ fn internal_tanimoto_parallel<'py>(
     agg: Option<String>,
 ) -> PyResult<Bound<'py, PyAny>> {
     let agg = parse_agg(agg)?;
-    let fps = FpBatch::from_py_seq(py_fps);
+    let fps = FpBatch::from_py_seq(py_fps)?;
     let n_fps = fps.n_fps as usize;
 
     if n_fps == 0 {

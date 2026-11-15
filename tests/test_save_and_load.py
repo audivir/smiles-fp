@@ -102,3 +102,44 @@ def test_benchmark_unpickle_fingerprints(  # pragma: no cover
     _pickle(benchmark_fps, path)
     loaded = benchmark(_unpickle, path)
     assert benchmark_fps == loaded
+
+
+def _fp(smi: str, n_bits: int) -> ExplicitBitVect:
+    from rdkit import Chem
+    from rdkit.Chem import rdFingerprintGenerator as rdFPGen
+
+    return rdFPGen.GetMorganGenerator(radius=2, fpSize=n_bits).GetFingerprint(Chem.MolFromSmiles(smi))
+
+
+def test_save_fingerprints_unwritable_path_raises(tmp_path: Path) -> None:
+    with pytest.raises(OSError, match="Could not open"):
+        smiles_fp.save_fingerprints([_fp("CCO", 512)], tmp_path / "missing_dir" / "fps.bin")
+
+
+def test_save_fingerprints_mixed_lengths_raises_and_leaves_no_file(tmp_path: Path) -> None:
+    path = tmp_path / "fps.bin"
+    with pytest.raises(ValueError, match="Inconsistent fingerprint lengths"):
+        smiles_fp.save_fingerprints([_fp("CCO", 512), _fp("CCO", 1024)], path)
+    assert not path.exists()
+
+
+def test_save_fingerprints_wrong_item_type_raises(tmp_path: Path) -> None:
+    path = tmp_path / "fps.bin"
+    with pytest.raises(TypeError):
+        smiles_fp.save_fingerprints([_fp("CCO", 512), "not a fingerprint"], path)  # type: ignore[list-item]
+    assert not path.exists()
+
+
+def test_load_fingerprints_truncated_file_raises(tmp_path: Path) -> None:
+    path = tmp_path / "fps.bin"
+    smiles_fp.save_fingerprints([_fp("CCO", 512), _fp("CCN", 512)], path)
+    path.write_bytes(path.read_bytes()[:-8])
+    with pytest.raises(ValueError, match="truncated"):
+        smiles_fp.load_fingerprints(path)
+
+
+def test_load_fingerprints_huge_header_is_rejected_before_allocating(tmp_path: Path) -> None:
+    path = tmp_path / "fps.bin"
+    path.write_bytes((2**32 - 1).to_bytes(4, "little") + (8192).to_bytes(4, "little"))
+    with pytest.raises(ValueError, match="truncated"):
+        smiles_fp.load_fingerprints(path)
