@@ -469,6 +469,7 @@ fn pooled_internal_similarity<'py>(
 }
 
 #[pyfunction]
+#[pyo3(name = "_save_fingerprints")]
 fn save_fingerprints<'py>(fps: &Bound<'py, PySequence>, path: &Bound<'py, PyAny>) -> PyResult<()> {
     let py = fps.py();
     let path_buf: PathBuf = path.extract()?;

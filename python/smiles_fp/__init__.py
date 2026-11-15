@@ -15,9 +15,15 @@ from smiles_fp._smiles_fp import (
     load_fingerprints,
     mols_from_smiles,
     mols_to_smiles,
-    save_fingerprints,
 )
-from smiles_fp.helpers import get_mols, get_morgan_fps, mol_from_smi, to_matrix
+from smiles_fp.helpers import (
+    get_mols,
+    get_morgan_fps,
+    load_fingerprints_as_ndarray,
+    mol_from_smi,
+    save_fingerprints,
+    to_matrix,
+)
 from smiles_fp.search import similarity_search, windowed_bulk_tanimoto
 
 __all__ = [
@@ -30,6 +36,7 @@ __all__ = [
     "internal_tanimoto_mmap",
     "internal_tanimoto_parallel",
     "load_fingerprints",
+    "load_fingerprints_as_ndarray",
     "mol_from_smi",
     "mols_from_smiles",
     "mols_to_smiles",

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import pickle
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import conftest
+import numpy as np
 import pytest
 import smiles_fp
 
@@ -145,3 +146,114 @@ def test_load_fingerprints_huge_header_is_rejected_before_allocating(tmp_path: P
     path.write_bytes((2**32 - 1).to_bytes(4, "little") + (8192).to_bytes(4, "little"))
     with pytest.raises(ValueError, match="truncated"):
         smiles_fp.load_fingerprints(path)
+
+
+def bit_array(n_fps: int, n_bits: int, seed: int = 0) -> np.ndarray[Any, Any]:
+    return np.random.default_rng(seed).integers(0, 2, size=(n_fps, n_bits), dtype=np.uint8)
+
+
+@pytest.mark.parametrize("n_bits", [1, 63, 64, 65, 100, 2048])
+def test_array_roundtrip_matches_bit_vectors(tmp_path: Path, n_bits: int) -> None:
+    bits = bit_array(37, n_bits)
+    path = tmp_path / "array.fp"
+    smiles_fp.save_fingerprints(bits, path)
+
+    loaded = smiles_fp.load_fingerprints(path)
+    assert [list(fp.GetOnBits()) for fp in loaded] == [list(np.flatnonzero(row)) for row in bits]
+    np.testing.assert_array_equal(smiles_fp.load_fingerprints_as_ndarray(path), bits)
+
+
+def test_array_and_bit_vector_files_are_identical(tmp_path: Path) -> None:
+    fps = [_fp(smi, 2048) for smi in conftest.read_smis()[:50]]
+    bit_strings = [fp.ToBitString() for fp in fps]  # type: ignore[no-untyped-call]
+    bits = np.array([list(bit_string) for bit_string in bit_strings], dtype=np.uint8)
+    smiles_fp.save_fingerprints(fps, tmp_path / "fps.fp")
+    smiles_fp.save_fingerprints(bits, tmp_path / "array.fp")
+
+    assert (tmp_path / "fps.fp").read_bytes() == (tmp_path / "array.fp").read_bytes()
+    np.testing.assert_array_equal(smiles_fp.load_fingerprints_as_ndarray(tmp_path / "fps.fp"), bits)
+
+
+def test_array_save_accepts_non_contiguous_arrays(tmp_path: Path) -> None:
+    view = bit_array(40, 200)[::2, ::-1]
+    smiles_fp.save_fingerprints(view, tmp_path / "view.fp")
+    np.testing.assert_array_equal(
+        smiles_fp.load_fingerprints_as_ndarray(tmp_path / "view.fp"), view
+    )
+
+
+def test_array_save_without_fingerprints_writes_empty_file(tmp_path: Path) -> None:
+    path = tmp_path / "empty.fp"
+    smiles_fp.save_fingerprints(np.zeros((0, 128), dtype=np.uint8), path)
+    assert smiles_fp.load_fingerprints(path) == []
+    assert smiles_fp.load_fingerprints_as_ndarray(path).shape == (0, 0)
+
+
+@pytest.mark.parametrize(
+    ("bits", "error", "match"),
+    [
+        (np.full((3, 8), 2, dtype=np.uint8), ValueError, "only contain the values 0 and 1"),
+        (np.zeros((3, 0), dtype=np.uint8), ValueError, "at least one bit"),
+        (np.zeros((3, 8), dtype=np.bool_), TypeError, "2D with dtype uint8"),
+        (np.zeros((3, 8), dtype=np.float64), TypeError, "2D with dtype uint8"),
+        (np.zeros(8, dtype=np.uint8), TypeError, "2D with dtype uint8"),
+        (np.zeros((2, 3, 8), dtype=np.uint8), TypeError, "2D with dtype uint8"),
+    ],
+    ids=["value", "zero_bits", "bool", "float", "1d", "3d"],
+)
+def test_array_save_invalid_input_raises_and_leaves_no_file(
+    tmp_path: Path, bits: np.ndarray[Any, Any], error: type[Exception], match: str
+) -> None:
+    path = tmp_path / "fps.fp"
+    with pytest.raises(error, match=match):
+        smiles_fp.save_fingerprints(bits, path)
+    assert not path.exists()
+
+
+def test_array_save_unwritable_path_raises(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        smiles_fp.save_fingerprints(bit_array(2, 8), tmp_path / "missing_dir" / "fps.fp")
+
+
+def test_array_save_too_many_fingerprints_raises(tmp_path: Path) -> None:
+    # a broadcast view needs no memory, so the size limit is checkable.
+    too_many = np.broadcast_to(np.uint8(0), (2**32, 1))
+    with pytest.raises(ValueError, match=r"max 2\^32-1"):
+        smiles_fp.save_fingerprints(too_many, tmp_path / "fps.fp")
+
+
+def test_load_fingerprints_as_ndarray_truncated_file_raises(tmp_path: Path) -> None:
+    path = tmp_path / "fps.fp"
+    smiles_fp.save_fingerprints(bit_array(4, 64), path)
+    path.write_bytes(path.read_bytes()[:-8])
+    with pytest.raises(ValueError, match="truncated"):
+        smiles_fp.load_fingerprints_as_ndarray(path)
+
+
+def test_load_fingerprints_as_ndarray_missing_header_raises(tmp_path: Path) -> None:
+    path = tmp_path / "fps.fp"
+    path.write_bytes(b"\x01\x00")
+    with pytest.raises(ValueError, match="missing header"):
+        smiles_fp.load_fingerprints_as_ndarray(path)
+
+
+def test_benchmark_array_save(  # pragma: no cover
+    tmp_path: Path, benchmark: BenchmarkFixture
+) -> None:
+    bits = bit_array(conftest.BENCHMARK_SIZES[0], 2048)
+    benchmark(smiles_fp.save_fingerprints, bits, tmp_path / "bench.fp")
+
+    np.testing.assert_array_equal(
+        smiles_fp.load_fingerprints_as_ndarray(tmp_path / "bench.fp"), bits
+    )
+
+
+def test_benchmark_array_load(  # pragma: no cover
+    tmp_path: Path, benchmark: BenchmarkFixture
+) -> None:
+    bits = bit_array(conftest.BENCHMARK_SIZES[0], 2048)
+    smiles_fp.save_fingerprints(bits, tmp_path / "bench.fp")
+
+    loaded = benchmark(smiles_fp.load_fingerprints_as_ndarray, tmp_path / "bench.fp")
+
+    np.testing.assert_array_equal(loaded, bits)

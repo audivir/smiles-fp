@@ -14,7 +14,7 @@ from numpy.typing import NDArray
 from rdkit import Chem
 from rdkit.DataStructs.cDataStructs import ExplicitBitVect
 
-def save_fingerprints(
+def _save_fingerprints(
     py_fps: Sequence[ExplicitBitVect],
     filename: StrPath,
 ) -> None:
@@ -23,7 +23,7 @@ def save_fingerprints(
     All fingerprints must have the same length.
 
     Args:
-        py_fps: A sequence (list, tuple, etc.) of RDKit fingerprints.
+        py_fps: A sequence of RDKit fingerprints.
         filename: The path to the output file.
     """
 

@@ -2,21 +2,109 @@
 
 from __future__ import annotations
 
+import struct
 from collections.abc import Sequence
 from multiprocessing import cpu_count
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rdkit import Chem
 from rdkit.Chem import rdFingerprintGenerator as rdFPGen
 
-from smiles_fp._smiles_fp import mols_from_smiles
-
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
     import numpy as np
+    from _typeshed import StrPath
     from numpy.typing import NDArray
     from rdkit.DataStructs import ExplicitBitVect
+
+
+HEADER_SIZE = 8
+ARRAY_NDIM = 2
+
+
+def save_fingerprints(
+    py_fps: Sequence[ExplicitBitVect] | NDArray[np.uint8],
+    filename: StrPath,
+) -> None:
+    """Saves a sequence of fingerprints or a NDArray to a binary file.
+
+    All fingerprints must have the same length.
+
+    Args:
+        py_fps: A sequence of RDKit fingerprints or an uint8 NDArray.
+        filename: The path to the output file.
+
+    Raises:
+        TypeError: If an array is not 2D with dtype uint8.
+        ValueError: If an array has values other than 0 or 1 or no bits per fingerprint.
+    """
+    import numpy as np
+
+    if not isinstance(py_fps, np.ndarray):
+        from smiles_fp._smiles_fp import _save_fingerprints
+
+        _save_fingerprints(py_fps, filename)
+        return
+
+    if py_fps.ndim != ARRAY_NDIM or py_fps.dtype != np.uint8:
+        raise TypeError("Fingerprint arrays must be 2D with dtype uint8")
+    n_fps, n_bits = py_fps.shape
+    if n_fps >= 2**32 or n_bits >= 2**32:
+        raise ValueError("Too many fingerprints or bits for the file format (max 2^32-1)")
+    if n_fps == 0:
+        n_bits = 0
+    elif n_bits == 0:
+        raise ValueError("Fingerprints must have at least one bit")
+    elif py_fps.max() > 1:
+        raise ValueError("Fingerprints must only contain the values 0 and 1")
+
+    # pads to whole 64-bit blocks, as bits are stored as little-endian blocks.
+    padded: NDArray[np.uint8] = np.pad(py_fps, ((0, 0), (0, -n_bits % 64)))
+    blocks = np.packbits(padded, axis=1, bitorder="little").view("<u8")
+    path = Path(filename)
+    try:
+        with path.open("wb") as file:
+            file.write(struct.pack("<II", n_fps, n_bits))
+            blocks.tofile(file)
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+
+
+def load_fingerprints_as_ndarray(
+    filename: StrPath,
+) -> NDArray[np.uint8]:
+    """Loads a sequence of fingerprints as NDArray from a file created with `save_fingerprints`.
+
+    Args:
+        filename: The path to the binary fingerprint file.
+
+    Returns:
+        A unpacked uint8 NDArray with the fingerprint data.
+
+    Raises:
+        ValueError: If the file is truncated or corrupt.
+    """
+    import numpy as np
+
+    with Path(filename).open("rb") as file:
+        header = file.read(HEADER_SIZE)
+        if len(header) < HEADER_SIZE:
+            raise ValueError("Corrupt or truncated fingerprint file: missing header")
+        n_fps, n_bits = struct.unpack("<II", header)
+        if n_fps == 0:
+            return np.zeros((0, 0), dtype=np.uint8)
+        n_blocks = -(-n_bits // 64)
+        blocks = np.fromfile(file, dtype="<u8", count=n_fps * n_blocks)
+    if blocks.size != n_fps * n_blocks:
+        raise ValueError(
+            f"Corrupt or truncated fingerprint file: header declares {n_fps} fingerprints of "
+            f"{n_bits} bits"
+        )
+    bits = np.unpackbits(blocks.view(np.uint8).reshape(n_fps, -1), axis=1, bitorder="little")
+    return np.ascontiguousarray(bits[:, :n_bits])
 
 
 def to_matrix(vector: NDArray[np.float64], n: int, diagonal: float = 0.0) -> NDArray[np.float64]:
@@ -84,6 +172,8 @@ def get_mols(
         ValueError: If any invalid SMILES are provided
     """
     del verbose  # unused
+    from smiles_fp._smiles_fp import mols_from_smiles
+
     if not isinstance(smis, Sequence):
         smis = list(smis)
     mols = mols_from_smiles(smis, sanitize=sanitize, n_threads=n_jobs)
