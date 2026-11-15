@@ -74,6 +74,18 @@ def test_fps(test_smis: list[str], request: pytest.FixtureRequest) -> list[Expli
 
 
 @pytest.fixture(params=BENCHMARK_SIZES)
+def benchmark_smis(request: pytest.FixtureRequest) -> list[str]:  # pragma: no cover
+    n_smis: int = request.param
+    return read_smis()[:n_smis]
+
+
+@pytest.fixture
+def benchmark_mols(benchmark_smis: list[str]) -> list[Chem.Mol]:  # pragma: no cover
+    mols = get_cached_mols()
+    return [mols[s] for s in benchmark_smis]
+
+
+@pytest.fixture(params=BENCHMARK_SIZES)
 def benchmark_fps(request: pytest.FixtureRequest) -> list[ExplicitBitVect]:  # pragma: no cover
     n_smis: int = request.param
     smis = read_smis()[:n_smis]

@@ -32,6 +32,7 @@ Repository = "https://github.com/audivir/smiles-fp"
 dev = [
   "coverage",
   "doctyper",
+  "joblib",
   "maturin>=1.0,<2.0",
   "mypy",
   "packaging",
