@@ -1,6 +1,10 @@
 #include "smiles_fp/src/rdkit_shim.h"
 
 #include <DataStructs/ExplicitBitVect.h>
+#include <GraphMol/ROMol.h>
+#include <GraphMol/RWMol.h>
+#include <GraphMol/SmilesParse/SmilesParse.h>
+#include <GraphMol/SmilesParse/SmilesWrite.h>
 
 #include <boost/dynamic_bitset.hpp>
 #include <boost/python.hpp>
@@ -19,8 +23,8 @@
 
 namespace py = boost::python;
 
-// Thrown after a Python exception has been set (and deliberately NOT cleared). The Rust side
-// fetches it with PyErr::take, so the caller sees the original exception type and message.
+// A Python exception is pending and deliberately not cleared. The Rust side fetches it with
+// `PyErr::take`, so the caller sees the original exception type and message.
 struct PythonErrorPending : std::runtime_error {
   PythonErrorPending() : std::runtime_error("Python exception pending") {}
 };
@@ -59,7 +63,7 @@ void write_rdkit_bit_vects_to_file(size_t py_list_ptr, rust::Str filename) {
     throw std::runtime_error("Could not open '" + fname + "' for writing");
   }
 
-  // Any failure below must not leave a truncated file that looks valid.
+  // removes the partial file on failure, so a truncated file never looks valid.
   auto discard_partial_file = [&]() {
     fout.close();
     std::remove(fname.c_str());
@@ -145,7 +149,7 @@ FpBatch extract_rdkit_bit_vects(size_t py_list_ptr) {
       for (uint64_t b : blocks) result.data.push_back(b);
     }
   } catch (const py::error_already_set&) {
-    // Do not return an empty batch: callers would treat it as "no fingerprints".
+    // rethrows instead of returning an empty batch, which callers would read as no fingerprints.
     throw PythonErrorPending();
   }
   return result;
@@ -177,7 +181,7 @@ size_t create_rdkit_bit_vects(uint32_t n_fps, uint32_t n_bits,
     }
     return reinterpret_cast<size_t>(py_list);
   } catch (const py::error_already_set&) {
-    // Leave the Python error set for the caller; do not leak the half-built list.
+    // keeps the Python error set for the caller and frees the half-built list.
     Py_DECREF(py_list);
     return 0;
   } catch (const std::exception& e) {
@@ -185,4 +189,82 @@ size_t create_rdkit_bit_vects(uint32_t n_fps, uint32_t n_bits,
     PyErr_SetString(PyExc_RuntimeError, e.what());
     return 0;
   }
+}
+
+size_t parse_smiles_raw(rust::Str smiles, bool sanitize) {
+  try {
+    std::string smi(smiles.data(), smiles.size());
+    RDKit::RWMol* m = RDKit::SmilesToMol(smi, 0, sanitize);
+    return reinterpret_cast<size_t>(static_cast<RDKit::ROMol*>(m));
+  } catch (...) {
+    return 0;
+  }
+}
+
+size_t wrap_mols(rust::Slice<const size_t> ptrs) {
+  PyObject* list = PyList_New(static_cast<Py_ssize_t>(ptrs.size()));
+  if (!list) return 0;
+  size_t i = 0;
+  try {
+    for (; i < ptrs.size(); ++i) {
+      if (ptrs[i] == 0) {
+        Py_INCREF(Py_None);
+        PyList_SET_ITEM(list, i, Py_None);
+        continue;
+      }
+      // `ROMol` is noncopyable and registered with a `shared_ptr` holder, so Python co-owns the
+      // same object without a copy.
+      RDKit::ROMOL_SPTR sp(reinterpret_cast<RDKit::ROMol*>(ptrs[i]));
+      py::object o(sp);
+      PyObject* p = o.ptr();
+      Py_INCREF(p);
+      PyList_SET_ITEM(list, i, p);
+    }
+    return reinterpret_cast<size_t>(list);
+  } catch (const py::error_already_set&) {
+    // keeps the Python error set and frees the molecules that were not wrapped yet.
+    for (size_t j = i + 1; j < ptrs.size(); ++j)  // ptrs[i] was adopted by sp
+      delete reinterpret_cast<RDKit::ROMol*>(ptrs[j]);
+    Py_DECREF(list);
+    return 0;
+  }
+}
+
+MolPtrs extract_mol_ptrs(size_t py_seq_ptr) {
+  PyObject* fast = PySequence_Fast(reinterpret_cast<PyObject*>(py_seq_ptr),
+                                   "Expected a sequence of molecules");
+  if (!fast) throw PythonErrorPending();
+
+  MolPtrs result;
+  result.keepalive = reinterpret_cast<size_t>(fast);
+  try {
+    PyObject** items = PySequence_Fast_ITEMS(fast);
+    Py_ssize_t n = PySequence_Fast_GET_SIZE(fast);
+    result.ptrs.reserve(static_cast<size_t>(n));
+    for (Py_ssize_t i = 0; i < n; ++i) {
+      py::extract<RDKit::ROMol&> extractor(items[i]);
+      result.ptrs.push_back(reinterpret_cast<size_t>(&extractor()));
+    }
+  } catch (const py::error_already_set&) {
+    Py_DECREF(fast);
+    throw PythonErrorPending();
+  }
+  return result;
+}
+
+rust::String mol_to_smiles_raw(size_t mol_ptr, const SmilesOpts& opts) {
+  const RDKit::ROMol* mol = reinterpret_cast<const RDKit::ROMol*>(mol_ptr);
+  return rust::String(RDKit::MolToSmiles(
+      *mol, opts.isomeric_smiles, opts.kekule_smiles, opts.rooted_at_atom,
+      opts.canonical, opts.all_bonds_explicit, opts.all_hs_explicit,
+      /*doRandom=*/false, opts.ignore_atom_map_numbers));
+}
+
+size_t clone_mol_raw(size_t mol_ptr) {
+  const RDKit::ROMol* mol = reinterpret_cast<const RDKit::ROMol*>(mol_ptr);
+  return reinterpret_cast<size_t>(new RDKit::ROMol(*mol));
+}
+
+void free_mol_raw(size_t mol_ptr) {
+  delete reinterpret_cast<RDKit::ROMol*>(mol_ptr);
 }

@@ -1,4 +1,4 @@
-"""SmilesFp module."""
+"""Rust-accelerated Tanimoto similarity search over RDKit Morgan fingerprints."""
 
 from __future__ import annotations
 
@@ -13,6 +13,8 @@ from smiles_fp._smiles_fp import (
     internal_tanimoto_mmap,
     internal_tanimoto_parallel,
     load_fingerprints,
+    mols_from_smiles,
+    mols_to_smiles,
     save_fingerprints,
 )
 from smiles_fp.helpers import get_mols, get_morgan_fps, mol_from_smi, to_matrix
@@ -29,6 +31,8 @@ __all__ = [
     "internal_tanimoto_parallel",
     "load_fingerprints",
     "mol_from_smi",
+    "mols_from_smiles",
+    "mols_to_smiles",
     "save_fingerprints",
     "similarity_search",
     "to_matrix",

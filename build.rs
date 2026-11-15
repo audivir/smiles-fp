@@ -80,6 +80,8 @@ fn main() {
     println!("cargo:rustc-link-search=native={}", pip_lib_dir);
     println!("cargo:rustc-link-lib=RDKitDataStructs");
     println!("cargo:rustc-link-lib=RDKitRDGeneral");
+    println!("cargo:rustc-link-lib=RDKitGraphMol");
+    println!("cargo:rustc-link-lib=RDKitSmilesParse");
     println!("cargo:rustc-link-lib={}", boost_link_name);
 
     // Injecting rpath

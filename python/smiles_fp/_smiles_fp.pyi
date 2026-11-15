@@ -1,7 +1,8 @@
 """Type stubs for the compiled Rust module '_smiles_fp'.
 
-This file provides type hints for static analysis tools (e.g., 'mypy', 'pyright')
-and enables autocompletion in IDEs for the functions defined in Rust.
+This file provides type hints for static analysis tools (e.g., 'mypy',
+'pyright') and enables autocompletion in IDEs for the functions defined
+in Rust.
 """
 
 from collections.abc import Sequence
@@ -10,6 +11,7 @@ from typing import Literal
 import numpy as np
 from _typeshed import StrPath
 from numpy.typing import NDArray
+from rdkit import Chem
 from rdkit.DataStructs.cDataStructs import ExplicitBitVect
 
 def save_fingerprints(
@@ -157,4 +159,61 @@ def internal_tanimoto_mmap(
         (size: N * (N-1) / 2). Can be converted to a full symmetric 2D matrix
         using scipy.spatial.distance.squareform.
         Otherwise, returns a 1D array of the aggregated similarity scores.
+    """
+
+def mols_from_smiles(
+    smiles: Sequence[str],
+    sanitize: bool = True,
+    *,
+    n_threads: int = -1,
+) -> list[Chem.Mol | None]:
+    """Parses SMILES to RDKit molecules multi-threaded.
+
+    Args:
+        smiles: Sequence of SMILES strings to parse.
+        sanitize: Whether to sanitize and remove Hs.
+        n_threads: The number of threads to use. Defaults to -1 (auto-detect).
+
+    Returns:
+        A list with a molecule per SMILES, or None where parsing failed.
+    """
+
+def mols_to_smiles(
+    mols: Sequence[Chem.Mol],
+    isomeric_smiles: bool = True,
+    kekule_smiles: bool = False,
+    rooted_at_atom: int | Sequence[int | None] | None = None,
+    canonical: bool = True,
+    all_bonds_explicit: bool = False,
+    all_hs_explicit: bool = False,
+    *,
+    ignore_atom_map_numbers: bool = False,
+    n_threads: int = -1,
+) -> list[str]:
+    """Writes SMILES for RDKit molecules multi-threaded.
+
+    Input molecules must not be modified by another GIL-released RDKit function during conversion.
+    `doRandom` is not supported because RDKit's random generator is global and not thread-safe.
+    A molecule that appears several times is converted once per distinct `rooted_at_atom`,
+    and re-written at each position.
+
+    Args:
+        mols: A sequence of RDKit molecules to convert.
+        isomeric_smiles: Include stereochemistry and isotope information.
+        kekule_smiles: Use the Kekule form (no aromatic bonds).
+        rooted_at_atom: If non-negative, start the SMILES at this atom (overrides `canonical`).
+            One index for all molecules, or a sequence with one index (or None) per molecule.
+        canonical: Canonicalize the output.
+        all_bonds_explicit: Write the symbol of every bond.
+        all_hs_explicit: Write the H count of every atom.
+        ignore_atom_map_numbers: Ignore atom map numbers when canonicalizing.
+        n_threads: The number of threads to use. Defaults to -1 (auto-detect).
+
+    Returns:
+        A list with each molecule's SMILES.
+
+    Raises:
+        TypeError: If an item is not a molecule.
+        ValueError: If a `rooted_at_atom` sequence does not have one item per molecule.
+        RuntimeError: If RDKit cannot write a molecule (e.g. `rooted_at_atom` out of range).
     """
