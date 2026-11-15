@@ -1,16 +1,18 @@
-"""Helper functions for SmilesFp package."""
+"""Helper functions for conversion of RDKit molecules and NumPy arrays."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from multiprocessing import cpu_count
 from typing import TYPE_CHECKING
 
 from rdkit import Chem
 from rdkit.Chem import rdFingerprintGenerator as rdFPGen
-from tqdm import tqdm
+
+from smiles_fp._smiles_fp import mols_from_smiles
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable
 
     import numpy as np
     from numpy.typing import NDArray
@@ -47,7 +49,7 @@ def to_matrix(vector: NDArray[np.float64], n: int, diagonal: float = 0.0) -> NDA
 
 
 def mol_from_smi(smi: str) -> Chem.Mol:
-    """Converts a SMILES string to a RDKit molecule.
+    """Converts a SMILES to a RDKit molecule, fails on an invalid SMILES.
 
     Args:
         smi: SMILES to convert.
@@ -56,45 +58,45 @@ def mol_from_smi(smi: str) -> Chem.Mol:
         A RDKit Molecule
 
     Raises:
-        ValueError: If invalid SMILES are provide
+        ValueError: If an invalid SMILES is provided
     """
     mol: Chem.Mol | None = Chem.MolFromSmiles(smi)
     if mol:
         return mol
-    raise ValueError(f"Could not convert {smi} to a molecule.")  # pragma: no cover
+    raise ValueError(f"Could not convert {smi} to a molecule.")
 
 
-def get_mols(smis: Iterable[str], n_jobs: int = -1, verbose: bool = False) -> list[Chem.Mol]:
-    """Converts a batch of SMILES strings to RDKit molecules.
+def get_mols(
+    smis: Iterable[str], n_jobs: int = -1, verbose: bool = False, *, sanitize: bool = True
+) -> list[Chem.Mol]:
+    """Converts a batch of SMILES to RDKit molecules, fails on any invalid SMILES.
 
     Args:
         smis: Iterable of SMILES strings to convert.
-        n_jobs: Number of jobs. Defaults to -1 (auto-detect).
-        verbose: If a progress bar should be printed.
+        n_jobs: Number of threads. Defaults to -1 (auto-detect).
+        verbose: Ignored.
+        sanitize: Whether to sanitize and remove Hs.
 
     Returns:
         A list of RDKit molecules
 
     Raises:
-        ValueError: If invalid SMILES are provide
+        ValueError: If any invalid SMILES are provided
     """
-    import joblib
-
-    n_jobs = n_jobs if n_jobs > 0 else cpu_count()
-
-    with joblib.Parallel(
-        n_jobs=n_jobs,
-        return_as="generator",
-    ) as p:
-        mol_gen: Iterable[Chem.Mol] = p(joblib.delayed(mol_from_smi)(smi) for smi in smis)
-
-        if verbose:  # pragma: no cover
-            mol_gen = tqdm(mol_gen)
-        return list(mol_gen)
+    del verbose  # unused
+    if not isinstance(smis, Sequence):
+        smis = list(smis)
+    mols = mols_from_smiles(smis, sanitize=sanitize, n_threads=n_jobs)
+    failed = [smi for smi, mol in zip(smis, mols, strict=True) if mol is None]
+    if failed:
+        raise ValueError(
+            f"Could not convert {len(failed)} SMILES to molecules: {', '.join(failed)}"
+        )
+    return mols  # type: ignore[return-value]
 
 
 def get_morgan_fps(
-    mols: Sequence[ExplicitBitVect], radius: int = 2, n_bits: int = 2048, n_threads: int = -1
+    mols: Sequence[Chem.Mol], radius: int = 2, n_bits: int = 2048, n_threads: int = -1
 ) -> tuple[ExplicitBitVect, ...]:
     """Converts RDKit molecules to Morgan fingerprints.
 

@@ -19,7 +19,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 # build_wheel.py overrides it
-dependencies = ["joblib", "numpy", "rdkit==2026.9.1", "scipy", "tqdm"]
+dependencies = ["numpy", "rdkit==2026.9.1", "scipy"]
 
 [project.urls]
 Homepage = "https://github.com/audivir/smiles-fp"
@@ -41,6 +41,7 @@ dev = [
   "requests",
   "ruff",
   "tomli",
+  "tqdm",
 ]
 
 [build-system]
