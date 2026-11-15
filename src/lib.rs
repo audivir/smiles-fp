@@ -69,6 +69,11 @@ fn setup_local_pool(n_threads: i32) -> Result<rayon::ThreadPool, String> {
         .map_err(|e| format!("Failed to build thread pool: {}", e))
 }
 
+/// Run `f` on the Rayon pool with the GIL released (nothing in `f` may touch Python).
+fn run_pool<R: Send, F: FnOnce() -> R + Send>(py: Python<'_>, pool: &rayon::ThreadPool, f: F) -> R {
+    py.detach(|| pool.install(f))
+}
+
 /// Aggregation methods
 enum Agg {
     Mean,
@@ -226,7 +231,7 @@ fn pooled_similarity<'py>(
             let mut out_scores = vec![0.0f64; n_fps1 * k_actual];
 
             if k_actual > 0 {
-                pool.install(|| {
+                run_pool(py, &pool, || {
                     out_indices
                         .par_chunks_mut(k_actual)
                         .zip(out_scores.par_chunks_mut(k_actual))
@@ -280,7 +285,7 @@ fn pooled_similarity<'py>(
         }
         Agg::Mean | Agg::Max | Agg::Min => {
             let mut results = vec![0.0f64; n_fps1];
-            pool.install(|| {
+            run_pool(py, &pool, || {
                 results.par_iter_mut().enumerate().for_each(|(i, out)| {
                     let fp1 = &data1[i * n_blocks..(i + 1) * n_blocks];
                     let pop1: u32 = fp1.iter().map(|b| b.count_ones()).sum();
@@ -315,7 +320,7 @@ fn pooled_similarity<'py>(
         }
         Agg::Full => {
             let mut results = vec![0.0f64; n_fps1 * n_fps2];
-            pool.install(|| {
+            run_pool(py, &pool, || {
                 results
                     .par_chunks_mut(n_fps2)
                     .enumerate()
@@ -360,7 +365,7 @@ fn pooled_internal_similarity<'py>(
         )),
         Agg::Mean | Agg::Max | Agg::Min => {
             let mut results = vec![0.0f64; n_fps];
-            pool.install(|| {
+            run_pool(py, &pool, || {
                 results.par_iter_mut().enumerate().for_each(|(i, out)| {
                     let fp1 = &data[i * n_blocks..(i + 1) * n_blocks];
                     let pop1 = popcounts[i];
@@ -407,7 +412,7 @@ fn pooled_internal_similarity<'py>(
             let mut results = vec![0.0f64; n_pairs];
             let res_ptr = SyncPtr(results.as_mut_ptr());
 
-            pool.install(|| {
+            run_pool(py, &pool, || {
                 (0..n_fps).into_par_iter().for_each(move |i| {
                     let ptr = res_ptr; // forces the closure to capture the thread-safe SyncPtr
 
