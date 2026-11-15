@@ -4,8 +4,16 @@
 #include "rust/cxx.h"
 #include "smiles_fp/src/lib.rs.h"
 
+// Writes a Python sequence of `ExplicitBitVect` to a fingerprint file. Requires the GIL. Removes
+// the partial file and throws on failure: `PythonErrorPending` when a Python error is set (for
+// example inconsistent fingerprint lengths), `std::runtime_error` for I/O errors.
 void write_rdkit_bit_vects_to_file(size_t py_list_ptr, rust::Str filename);
+// Copies the bits of a Python sequence of `ExplicitBitVect` into a batch of 64-bit blocks. Requires
+// the GIL. Throws `PythonErrorPending` instead of returning a partial batch when an item is not a
+// bit vector or the lengths differ.
 FpBatch extract_rdkit_bit_vects(size_t py_list_ptr);
+// Builds a new Python list of `ExplicitBitVect` from 64-bit blocks, `n_bits` bits per fingerprint.
+// Requires the GIL. Returns the list as an integer, or 0 with a Python error set on failure.
 size_t create_rdkit_bit_vects(uint32_t n_fps, uint32_t n_bits,
                               rust::Slice<const uint64_t> blocks);
 
@@ -30,4 +38,5 @@ rust::String mol_to_smiles_raw(size_t mol_ptr, const SmilesOpts& opts);
 // Returns an owning deep copy of a molecule without touching the Python API. The caller frees it
 // with `free_mol_raw`.
 size_t clone_mol_raw(size_t mol_ptr);
+// Frees a molecule returned by `parse_smiles_raw` or `clone_mol_raw` that was not wrapped.
 void free_mol_raw(size_t mol_ptr);
