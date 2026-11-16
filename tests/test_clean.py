@@ -81,7 +81,7 @@ def clean_mol_reference(mol: Chem.Mol, allowed: set[int] | None, flags: Flags) -
             return None
     if flags["neutralize"]:
         mol = Uncharger().uncharge(mol)
-    atoms = mol.GetAtoms()  # type: ignore[no-untyped-call]
+    atoms = mol.GetAtoms()  # type: ignore[no-untyped-call,unused-ignore]
     if flags["no_isotopes"]:
         for atom in atoms:
             atom.SetIsotope(0)
