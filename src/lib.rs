@@ -70,6 +70,7 @@ mod ffi {
         fn free_salt_stripper(stripper: usize);
         fn make_cleaner(opts: &CleanOpts, allowed: &[u32], salt_lines: &str) -> Result<usize>;
         fn free_cleaner(cleaner: usize);
+        fn clean_mol_inplace_raw(cleaner: usize, mol_ptr: usize) -> bool;
         fn clone_rwmol_raw(mol_ptr: usize) -> Result<usize>;
         fn clean_mol_raw(cleaner: usize, mol_ptr: usize, want_smiles: bool) -> Cleaned;
         fn clean_smiles_raw(cleaner: usize, smiles: &str, want_mol: bool) -> Cleaned;

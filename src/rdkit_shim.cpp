@@ -480,3 +480,21 @@ Cleaned clean_mol_raw(size_t cleaner, size_t mol_ptr, bool want_smiles) {
     return Cleaned{rust::String(), 0};
   }
 }
+
+bool clean_mol_inplace_raw(size_t cleaner, size_t mol_ptr) {
+  try {
+    auto* c = reinterpret_cast<Cleaner*>(cleaner);
+    auto* orig = reinterpret_cast<RDKit::ROMol*>(mol_ptr);
+    // works on a private copy, so a molecule that turns out invalid stays unchanged.
+    auto mol = std::make_unique<RDKit::RWMol>(*orig);
+    if (!clean_mol(*c, mol)) return false;
+    // `RWMol` adds no members to `ROMol`, and the in-place functions of RDKit cast the same way.
+    // `clear` frees the old atoms and bonds, which the move assignment would leak.
+    auto& target = static_cast<RDKit::RWMol&>(*orig);
+    target.clear();
+    target = std::move(*mol);
+    return true;
+  } catch (...) {
+    return false;
+  }
+}

@@ -80,3 +80,8 @@ size_t clone_rwmol_raw(size_t mol_ptr);
 // the SMILES of the cleaned molecule if `want_smiles`, else the molecule in `mol`. Both are empty
 // or 0 if the molecule is invalid or cleaned away or if RDKit throws.
 Cleaned clean_mol_raw(size_t cleaner, size_t mol_ptr, bool want_smiles);
+
+// Cleans the molecule behind `mol_ptr` in place and returns whether it is valid. An invalid
+// molecule stays unchanged. Requires exclusive access to the molecule, and its Python object stays
+// valid with the cleaned content.
+bool clean_mol_inplace_raw(size_t cleaner, size_t mol_ptr);

@@ -5,18 +5,22 @@ use pyo3::{
     types::{PyAny, PySequence},
 };
 use rayon::prelude::*;
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::LazyLock};
 
 /// Default salt patterns, a copy of `Salts.txt` of RDKit with normalized whitespace.
 const DEFAULT_SALTS: &str = include_str!("salts.txt");
 
-/// Returns the default SMARTS, one per line, read like `SaltRemover`: text before `//`, first word.
-pub(crate) fn default_salt_lines() -> String {
-    let text = DEFAULT_SALTS;
-    text.lines()
+/// Default SMARTS, one per line, read like `SaltRemover`: text before `//`, first word.
+static SALT_LINES: LazyLock<String> = LazyLock::new(|| {
+    DEFAULT_SALTS
+        .lines()
         .filter_map(|l| l.split("//").next()?.split_whitespace().next())
         .collect::<Vec<_>>()
         .join("\n")
+});
+
+pub(crate) fn default_salt_lines() -> &'static str {
+    &SALT_LINES
 }
 
 /// Wrapper around the query molecules of the default salts, owned by one thread.
@@ -24,7 +28,7 @@ struct SaltStripper(usize);
 
 impl SaltStripper {
     fn new() -> Result<Self, String> {
-        ffi::make_salt_stripper(&default_salt_lines())
+        ffi::make_salt_stripper(default_salt_lines())
             .map(Self)
             .map_err(|e| e.what().to_string())
     }

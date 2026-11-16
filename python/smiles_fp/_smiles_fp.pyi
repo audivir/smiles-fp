@@ -312,6 +312,7 @@ def clean(
     isomeric: bool = True,
     allowed_elements: Collection[int] | None = None,
     neutralize: bool = False,
+    inplace: Literal[False] = False,
     n_threads: int = -1,
 ) -> list[str | None]:
     """Cleans SMILES or molecules multi-threaded and returns canonical SMILES or molecules.
@@ -331,15 +332,20 @@ def clean(
         isomeric: Whether to keep isomeric information in the SMILES.
         allowed_elements: Atomic numbers. If set, molecules with other elements are invalid.
         neutralize: Whether to neutralize charges. Groups of neutral species, like nitro, stay.
+        inplace: Whether to clean molecules in place instead of copying them. Holds the GIL, so
+            other Python threads cannot use the molecules, and the molecules must not be used by a
+            GIL-released RDKit function in another thread. An invalid molecule stays unchanged.
         n_threads: The number of threads to use. Defaults to -1 (auto-detect).
 
     Returns:
-        A list with one result per input, or None where it is invalid, nothing is left after
-        cleaning, or RDKit fails (e.g. sanitizing a desalted molecule).
+        With `inplace`, whether each molecule is valid. Otherwise a list with one result per
+        input, or None where it is invalid, nothing is left after cleaning, or RDKit fails (e.g.
+        sanitizing a desalted molecule).
 
     Raises:
-        TypeError: If the items are neither all SMILES nor all molecules.
-        ValueError: If `output` is unknown.
+        TypeError: If the items are neither all SMILES nor all molecules, or `inplace` is set for
+            SMILES.
+        ValueError: If `output` is unknown or not "mol" with `inplace`.
     """
 
 @overload
@@ -353,5 +359,20 @@ def clean(
     isomeric: bool = True,
     allowed_elements: Collection[int] | None = None,
     neutralize: bool = False,
+    inplace: Literal[False] = False,
     n_threads: int = -1,
 ) -> list[Chem.Mol | None]: ...
+@overload
+def clean(
+    inputs: Sequence[Chem.Mol],
+    output: Literal["mol"] = "mol",
+    *,
+    no_salts: bool = False,
+    no_isotopes: bool = False,
+    no_stereo: bool = False,
+    isomeric: bool = True,
+    allowed_elements: Collection[int] | None = None,
+    neutralize: bool = False,
+    inplace: Literal[True],
+    n_threads: int = -1,
+) -> list[bool]: ...

@@ -90,6 +90,12 @@ def clean_reference(smiles: str, allowed: set[int] | None, flags: Flags) -> str 
     return None if mol is None else write_reference(mol, flags)
 
 
+def one_mol(smiles: str) -> Chem.Mol:
+    mol = mols_from_smiles([smiles])[0]
+    assert mol is not None
+    return mol
+
+
 def corpus() -> list[str]:
     smis = [s.split()[0] for s in read_smis()[:60]]
     return [*EDGE_CASES, *(s + suffix for s in smis for suffix in SUFFIXES)]
@@ -143,15 +149,52 @@ def test_mols_match_reference(values: tuple[bool, ...], allowed: set[int] | None
 
 
 def test_repeated_molecule_gets_own_copies() -> None:
-    mol = mols_from_smiles(["CCN.Cl"])[0]
+    mol = one_mol("CCN.Cl")
     first, second = clean([mol, mol], "mol", no_salts=True)
     assert first is not second
     assert Chem.MolToSmiles(first) == Chem.MolToSmiles(second) == "CCN"
 
 
 def test_mixed_inputs_raise() -> None:
-    mol = mols_from_smiles(["CCO"])[0]
+    mol = one_mol("CCO")
     with pytest.raises(TypeError):
-        clean(["CCO", mol])
+        clean(["CCO", mol])  # type: ignore[arg-type]
     with pytest.raises(TypeError):
-        clean([mol, "CCO"])
+        clean([mol, "CCO"])  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("allowed", [None, ALLOWED], ids=["any", "allowed"])
+@pytest.mark.parametrize("values", list(product([False, True], repeat=len(FLAGS))))
+def test_inplace_matches_copy(values: tuple[bool, ...], allowed: set[int] | None) -> None:
+    flags: Flags = dict(zip(FLAGS, values, strict=True))  # type: ignore[assignment]
+    mols = [m for m in mols_from_smiles(corpus()) if m is not None]
+    before = [Chem.MolToSmiles(m) for m in mols]
+    copies = clean(mols, "mol", allowed_elements=allowed, **flags)
+    valid = clean(mols, allowed_elements=allowed, inplace=True, **flags)
+    assert valid == [c is not None for c in copies]
+    expected = [Chem.MolToSmiles(c) if c else b for c, b in zip(copies, before, strict=True)]
+    # invalid molecules stay unchanged.
+    assert [Chem.MolToSmiles(m) for m in mols] == expected
+
+
+def test_inplace_keeps_object_usable() -> None:
+    mol = one_mol("CCN.Cl")
+    assert clean([mol], no_salts=True, inplace=True) == [True]
+    assert mol.GetNumAtoms() == 3
+    assert Chem.MolToSmiles(Chem.Mol(mol)) == "CCN"
+    assert Chem.MolToSmiles(Chem.RWMol(mol)) == "CCN"
+
+
+def test_inplace_repeated_molecule() -> None:
+    mol = one_mol("CCN.Cl")
+    assert clean([mol, mol], no_salts=True, inplace=True) == [True, True]
+    assert Chem.MolToSmiles(mol) == "CCN"
+
+
+def test_inplace_argument_errors() -> None:
+    mol = one_mol("CCO")
+    assert clean([], inplace=True) == []
+    with pytest.raises(TypeError, match="inplace requires molecules"):
+        clean(["CCO"], "mol", inplace=True)  # type: ignore[call-overload]
+    with pytest.raises(ValueError, match="requires output"):
+        clean([mol], "smiles", inplace=True)  # type: ignore[call-overload]
