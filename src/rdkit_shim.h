@@ -60,3 +60,23 @@ void free_salt_stripper(size_t stripper);
 // the Python API, so it is thread-safe on distinct strippers. Returns an owning `ROMol*` as an
 // integer, or 0 if sanitizing the stripped molecule fails.
 size_t strip_salts_raw(size_t stripper, size_t mol_ptr, bool keep_last);
+
+// Creates a cleaner that applies `CleanOpts` to SMILES. `allowed` holds atomic numbers and is
+// empty for no filter. `salt_lines` is used if `no_salts` is set. A cleaner is not shared between
+// threads. The caller frees it with `free_cleaner`.
+size_t make_cleaner(const CleanOpts& opts, rust::Slice<const uint32_t> allowed,
+                    rust::Str salt_lines);
+void free_cleaner(size_t cleaner);
+// Parses, cleans, and writes one SMILES without touching the Python API, so it is thread-safe on
+// distinct cleaners. Returns an empty SMILES if the input is invalid, empty, or cleaned away or if
+// RDKit throws. With `want_mol`, `mol` owns the molecule parsed from the written SMILES, else 0.
+Cleaned clean_smiles_raw(size_t cleaner, rust::Str smiles, bool want_mol);
+
+// Returns an owning copy of a molecule as an `RWMol` without touching the Python API. The caller
+// passes it to `clean_mol_raw`, or frees it with `free_mol_raw`.
+size_t clone_rwmol_raw(size_t mol_ptr);
+// Cleans a private copy from `clone_rwmol_raw` and takes ownership of it, so it is thread-safe on
+// distinct cleaners. Unlike `clean_smiles_raw`, the cleaned molecule is not parsed again. Returns
+// the SMILES of the cleaned molecule if `want_smiles`, else the molecule in `mol`. Both are empty
+// or 0 if the molecule is invalid or cleaned away or if RDKit throws.
+Cleaned clean_mol_raw(size_t cleaner, size_t mol_ptr, bool want_smiles);

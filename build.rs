@@ -109,6 +109,7 @@ fn main() {
     println!("cargo:rustc-link-lib=RDKitSmilesParse");
     println!("cargo:rustc-link-lib=RDKitFingerprints");
     println!("cargo:rustc-link-lib=RDKitChemTransforms");
+    println!("cargo:rustc-link-lib=RDKitMolStandardize");
     println!("cargo:rustc-link-lib={}", boost_link_name);
 
     // Injecting rpath

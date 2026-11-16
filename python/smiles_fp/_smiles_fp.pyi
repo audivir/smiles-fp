@@ -5,8 +5,8 @@ This file provides type hints for static analysis tools (e.g., 'mypy',
 in Rust.
 """
 
-from collections.abc import Sequence
-from typing import Literal, TypeAlias
+from collections.abc import Collection, Sequence
+from typing import Literal, TypeAlias, overload
 
 import numpy as np
 from _typeshed import StrPath
@@ -300,3 +300,58 @@ def _strip_salts(
     Raises:
         TypeError: If an item is not a molecule.
     """
+
+@overload
+def clean(
+    inputs: Sequence[str | None] | Sequence[Chem.Mol],
+    output: Literal["smiles"] = "smiles",
+    *,
+    no_salts: bool = False,
+    no_isotopes: bool = False,
+    no_stereo: bool = False,
+    isomeric: bool = True,
+    allowed_elements: Collection[int] | None = None,
+    neutralize: bool = False,
+    n_threads: int = -1,
+) -> list[str | None]:
+    """Cleans SMILES or molecules multi-threaded and returns canonical SMILES or molecules.
+
+    Parses SMILES, removes explicit hydrogens, applies the selected steps, writes the SMILES, and
+    parses it again as a check. Molecules are copied first and stay unchanged, and with
+    `output="mol"` the cleaned copies are returned without parsing. Releases the GIL and creates
+    no Python objects until the end.
+
+    Args:
+        inputs: SMILES strings, where None and empty strings are invalid, or molecules.
+        output: Whether to return canonical SMILES or molecules. For SMILES inputs the molecules
+            are parsed from the written SMILES.
+        no_salts: Whether to remove salts with the default patterns of `SaltRemover`.
+        no_isotopes: Whether to remove isotopes. Implied if `isomeric` is False.
+        no_stereo: Whether to remove stereochemistry. Implied if `isomeric` is False.
+        isomeric: Whether to keep isomeric information in the SMILES.
+        allowed_elements: Atomic numbers. If set, molecules with other elements are invalid.
+        neutralize: Whether to neutralize charges. Groups of neutral species, like nitro, stay.
+        n_threads: The number of threads to use. Defaults to -1 (auto-detect).
+
+    Returns:
+        A list with one result per input, or None where it is invalid, nothing is left after
+        cleaning, or RDKit fails (e.g. sanitizing a desalted molecule).
+
+    Raises:
+        TypeError: If the items are neither all SMILES nor all molecules.
+        ValueError: If `output` is unknown.
+    """
+
+@overload
+def clean(
+    inputs: Sequence[str | None] | Sequence[Chem.Mol],
+    output: Literal["mol"],
+    *,
+    no_salts: bool = False,
+    no_isotopes: bool = False,
+    no_stereo: bool = False,
+    isomeric: bool = True,
+    allowed_elements: Collection[int] | None = None,
+    neutralize: bool = False,
+    n_threads: int = -1,
+) -> list[Chem.Mol | None]: ...

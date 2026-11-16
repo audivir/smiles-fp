@@ -10,8 +10,9 @@ use std::collections::HashMap;
 /// Default salt patterns, a copy of `Salts.txt` of RDKit with normalized whitespace.
 const DEFAULT_SALTS: &str = include_str!("salts.txt");
 
-/// Extracts the SMARTS of each line like `SaltRemover`: text before `//`, first word only.
-fn parse_salts(text: &str) -> String {
+/// Returns the default SMARTS, one per line, read like `SaltRemover`: text before `//`, first word.
+pub(crate) fn default_salt_lines() -> String {
+    let text = DEFAULT_SALTS;
     text.lines()
         .filter_map(|l| l.split("//").next()?.split_whitespace().next())
         .collect::<Vec<_>>()
@@ -23,7 +24,7 @@ struct SaltStripper(usize);
 
 impl SaltStripper {
     fn new() -> Result<Self, String> {
-        ffi::make_salt_stripper(&parse_salts(DEFAULT_SALTS))
+        ffi::make_salt_stripper(&default_salt_lines())
             .map(Self)
             .map_err(|e| e.what().to_string())
     }

@@ -17,6 +17,7 @@ use std::{
     path::PathBuf,
 };
 
+mod clean;
 mod salt_remover;
 
 /// Thread-safe pointer wrapper
@@ -105,6 +106,22 @@ mod ffi {
         ignore_atom_map_numbers: bool,
     }
 
+    /// Container for the flags of the cleaning pipeline.
+    #[derive(Clone, Copy)]
+    struct CleanOpts {
+        no_salts: bool,
+        no_isotopes: bool,
+        no_stereo: bool,
+        isomeric: bool,
+        neutralize: bool,
+    }
+
+    /// Container for a cleaned SMILES. An empty `smiles` marks an invalid input.
+    struct Cleaned {
+        smiles: String,
+        mol: usize,
+    }
+
     struct MolPtrs {
         keepalive: usize,
         ptrs: Vec<usize>,
@@ -132,6 +149,11 @@ mod ffi {
         fn free_morgan_generator(generator: usize);
         fn make_salt_stripper(smarts_lines: &str) -> Result<usize>;
         fn free_salt_stripper(stripper: usize);
+        fn make_cleaner(opts: &CleanOpts, allowed: &[u32], salt_lines: &str) -> Result<usize>;
+        fn free_cleaner(cleaner: usize);
+        fn clone_rwmol_raw(mol_ptr: usize) -> Result<usize>;
+        fn clean_mol_raw(cleaner: usize, mol_ptr: usize, want_smiles: bool) -> Cleaned;
+        fn clean_smiles_raw(cleaner: usize, smiles: &str, want_mol: bool) -> Cleaned;
         fn strip_salts_raw(stripper: usize, mol_ptr: usize, keep_last: bool) -> usize;
         fn smiles_to_fp_blocks(generator: usize, smiles: &str, out: &mut [u64]) -> i32;
     }
@@ -1222,6 +1244,7 @@ fn _smiles_fp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(mols_from_smiles, m)?)?;
     m.add_function(wrap_pyfunction!(mols_to_smiles, m)?)?;
     m.add_function(wrap_pyfunction!(salt_remover::strip_salts, m)?)?;
+    m.add_function(wrap_pyfunction!(clean::clean, m)?)?;
     m.add_function(wrap_pyfunction!(save_morgan_fps_from_smiles, m)?)?;
     m.add_function(wrap_pyfunction!(bulk_tanimoto_parallel, m)?)?;
     m.add_function(wrap_pyfunction!(bulk_tanimoto_parallel_topk, m)?)?;
