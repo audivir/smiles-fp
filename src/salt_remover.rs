@@ -1,4 +1,4 @@
-use crate::{OwnedMols, ffi, ffi_error, setup_local_pool};
+use crate::{ffi, ffi_error, mols::OwnedMols, pool::setup_local_pool};
 use pyo3::{
     exceptions::PyRuntimeError,
     prelude::*,

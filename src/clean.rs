@@ -1,4 +1,9 @@
-use crate::{OwnedMols, ffi, ffi_error, run_pool, salt_remover::default_salt_lines, setup_local_pool};
+use crate::{
+    ffi, ffi_error,
+    mols::OwnedMols,
+    pool::{run_pool, setup_local_pool},
+    salt_remover::default_salt_lines,
+};
 use pyo3::{
     exceptions::{PyRuntimeError, PyValueError},
     prelude::*,
