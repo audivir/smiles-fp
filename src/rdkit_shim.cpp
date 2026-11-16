@@ -2,7 +2,10 @@
 
 #include <DataStructs/ExplicitBitVect.h>
 #include <GraphMol/Fingerprints/FingerprintGenerator.h>
+#include <GraphMol/ChemTransforms/ChemTransforms.h>
 #include <GraphMol/Fingerprints/MorganGenerator.h>
+#include <GraphMol/MolOps.h>
+#include <GraphMol/MolStandardize/Charge.h>
 #include <GraphMol/ROMol.h>
 #include <GraphMol/RWMol.h>
 #include <GraphMol/SmilesParse/SmilesParse.h>
@@ -10,9 +13,12 @@
 
 #include <boost/dynamic_bitset.hpp>
 #include <boost/python.hpp>
+#include <bitset>
 #include <cstdio>
 #include <fstream>
 #include <limits>
+#include <memory>
+#include <sstream>
 #include <stdexcept>
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -302,5 +308,197 @@ int32_t smiles_to_fp_blocks(size_t generator, rust::Str smiles, rust::Slice<uint
     return 0;
   } catch (...) {
     return 1;
+  }
+}
+
+struct SaltStripper {
+  std::vector<std::unique_ptr<RDKit::RWMol>> salts;
+};
+
+static SaltStripper build_stripper(rust::Str smarts_lines) {
+  SaltStripper stripper;
+  std::istringstream in(std::string(smarts_lines.data(), smarts_lines.size()));
+  std::string line;
+  while (std::getline(in, line)) {
+    if (line.empty()) continue;
+    std::unique_ptr<RDKit::RWMol> query(RDKit::SmartsToMol(line));
+    if (!query) throw std::runtime_error("Invalid salt SMARTS: " + line);
+    stripper.salts.push_back(std::move(query));
+  }
+  return stripper;
+}
+
+size_t make_salt_stripper(rust::Str smarts_lines) {
+  return reinterpret_cast<size_t>(new SaltStripper(build_stripper(smarts_lines)));
+}
+
+void free_salt_stripper(size_t stripper) {
+  delete reinterpret_cast<SaltStripper*>(stripper);
+}
+
+// deletes fragments that match `salt` until the atom count stops shrinking.
+static void delete_salt(std::unique_ptr<RDKit::ROMol>& mol, const RDKit::ROMol& salt,
+                        bool keep_last) {
+  size_t n_atoms = mol->getNumAtoms();
+  if (!n_atoms) return;
+  std::unique_ptr<RDKit::ROMol> next(RDKit::deleteSubstructs(*mol, salt, true));
+  if (keep_last && next->getNumAtoms() == 0) return;
+  mol = std::move(next);
+  while (mol->getNumAtoms() && n_atoms > mol->getNumAtoms()) {
+    n_atoms = mol->getNumAtoms();
+    next.reset(RDKit::deleteSubstructs(*mol, salt, true));
+    if (keep_last && next->getNumAtoms() == 0) break;
+    mol = std::move(next);
+  }
+}
+
+// strips a copy of `in` like `SaltRemover.StripMol`. Throws if sanitizing the result fails.
+static std::unique_ptr<RDKit::RWMol> strip_salts(const SaltStripper& stripper,
+                                                 const RDKit::ROMol& in, bool keep_last) {
+  std::vector<int> mapping;
+  auto single_fragment = [&](const RDKit::ROMol& m) {
+    mapping.clear();
+    return RDKit::MolOps::getMolFrags(m, mapping) <= 1;
+  };
+  auto mol = std::make_unique<RDKit::ROMol>(in);
+  bool modified = false;
+  if (!(keep_last && single_fragment(*mol))) {
+    size_t n_atoms = mol->getNumAtoms();
+    for (const auto& salt : stripper.salts) {
+      delete_salt(mol, *salt, keep_last);
+      if (n_atoms == mol->getNumAtoms()) continue;
+      n_atoms = mol->getNumAtoms();
+      modified = true;
+      if (keep_last && single_fragment(*mol)) break;
+    }
+  }
+  auto result = std::make_unique<RDKit::RWMol>(*mol);
+  if (modified && result->getNumAtoms() > 0) RDKit::MolOps::sanitizeMol(*result);
+  return result;
+}
+
+size_t strip_salts_raw(size_t stripper, size_t mol_ptr, bool keep_last) {
+  try {
+    auto result = strip_salts(*reinterpret_cast<const SaltStripper*>(stripper),
+                              *reinterpret_cast<const RDKit::ROMol*>(mol_ptr), keep_last);
+    return reinterpret_cast<size_t>(static_cast<RDKit::ROMol*>(result.release()));
+  } catch (...) {
+    return 0;
+  }
+}
+
+struct Cleaner {
+  CleanOpts opts;
+  std::bitset<256> allowed;  // empty means every element is allowed.
+  SaltStripper salts;
+  RDKit::MolStandardize::Uncharger uncharger;
+};
+
+size_t make_cleaner(const CleanOpts& opts, rust::Slice<const uint32_t> allowed,
+                    rust::Str salt_lines) {
+  auto cleaner = std::make_unique<Cleaner>();
+  cleaner->opts = opts;
+  // a non-isomeric result has neither, which also holds for molecules that are not written.
+  cleaner->opts.no_isotopes = opts.no_isotopes || !opts.isomeric;
+  cleaner->opts.no_stereo = opts.no_stereo || !opts.isomeric;
+  for (uint32_t z : allowed) {
+    if (z < cleaner->allowed.size()) cleaner->allowed.set(z);
+  }
+  if (opts.no_salts) cleaner->salts = build_stripper(salt_lines);
+  return reinterpret_cast<size_t>(cleaner.release());
+}
+
+void free_cleaner(size_t cleaner) {
+  delete reinterpret_cast<Cleaner*>(cleaner);
+}
+
+// cleans `mol` in place and returns whether it is still valid.
+static bool clean_mol(Cleaner& c, std::unique_ptr<RDKit::RWMol>& mol) {
+  if (mol->getNumAtoms() == 0) return false;
+  RDKit::MolOps::removeAllHs(*mol);
+  if (mol->getNumAtoms() == 0) return false;
+  if (c.opts.no_salts) {
+    mol = strip_salts(c.salts, *mol, false);
+    if (mol->getNumAtoms() == 0) return false;
+  }
+  if (c.opts.neutralize) c.uncharger.unchargeInPlace(*mol);
+  if (c.opts.no_isotopes) {
+    for (auto* atom : mol->atoms()) atom->setIsotope(0);
+  }
+  if (c.opts.no_stereo) RDKit::MolOps::removeStereochemistry(*mol);
+  if (c.allowed.any()) {
+    for (const auto* atom : mol->atoms()) {
+      auto z = static_cast<size_t>(atom->getAtomicNum());
+      if (z >= c.allowed.size() || !c.allowed[z]) return false;
+    }
+  }
+  return mol->getNumAtoms() > 0;
+}
+
+// writes the SMILES of a cleaned molecule and, with `verify`, checks that it parses again. Returns
+// an empty SMILES otherwise. With `want_mol`, `mol` owns the molecule parsed from the written SMILES.
+static Cleaned write_checked(const Cleaner& c, const RDKit::ROMol& mol, bool want_mol) {
+  Cleaned result{rust::String(), 0};
+  const std::string out = RDKit::MolToSmiles(mol, c.opts.isomeric);
+  if (!want_mol && !c.opts.verify) {
+    if (!out.empty()) result.smiles = rust::String(out.data(), out.size());
+    return result;
+  }
+  std::unique_ptr<RDKit::RWMol> check(RDKit::SmilesToMol(out));
+  if (out.empty() || !check || check->getNumAtoms() == 0) return result;
+  result.smiles = rust::String(out.data(), out.size());
+  if (want_mol) {
+    result.mol = reinterpret_cast<size_t>(static_cast<RDKit::ROMol*>(check.release()));
+  }
+  return result;
+}
+
+Cleaned clean_smiles_raw(size_t cleaner, rust::Str smiles, bool want_mol) {
+  try {
+    if (smiles.size() == 0) return Cleaned{rust::String(), 0};
+    auto* c = reinterpret_cast<Cleaner*>(cleaner);
+    std::unique_ptr<RDKit::RWMol> mol(
+        RDKit::SmilesToMol(std::string(smiles.data(), smiles.size())));
+    if (!mol || !clean_mol(*c, mol)) return Cleaned{rust::String(), 0};
+    return write_checked(*c, *mol, want_mol);
+  } catch (...) {
+    return Cleaned{rust::String(), 0};
+  }
+}
+
+size_t clone_rwmol_raw(size_t mol_ptr) {
+  const auto* mol = reinterpret_cast<const RDKit::ROMol*>(mol_ptr);
+  return reinterpret_cast<size_t>(static_cast<RDKit::ROMol*>(new RDKit::RWMol(*mol)));
+}
+
+Cleaned clean_mol_raw(size_t cleaner, size_t mol_ptr, bool want_smiles) {
+  // takes ownership, so the copy is freed on every path.
+  std::unique_ptr<RDKit::RWMol> mol(
+      static_cast<RDKit::RWMol*>(reinterpret_cast<RDKit::ROMol*>(mol_ptr)));
+  try {
+    auto* c = reinterpret_cast<Cleaner*>(cleaner);
+    if (!clean_mol(*c, mol)) return Cleaned{rust::String(), 0};
+    if (want_smiles) return write_checked(*c, *mol, false);
+    return Cleaned{rust::String(), reinterpret_cast<size_t>(static_cast<RDKit::ROMol*>(mol.release()))};
+  } catch (...) {
+    return Cleaned{rust::String(), 0};
+  }
+}
+
+bool clean_mol_inplace_raw(size_t cleaner, size_t mol_ptr) {
+  try {
+    auto* c = reinterpret_cast<Cleaner*>(cleaner);
+    auto* orig = reinterpret_cast<RDKit::ROMol*>(mol_ptr);
+    // works on a private copy, so a molecule that turns out invalid stays unchanged.
+    auto mol = std::make_unique<RDKit::RWMol>(*orig);
+    if (!clean_mol(*c, mol)) return false;
+    // `RWMol` adds no members to `ROMol`, and the in-place functions of RDKit cast the same way.
+    // `clear` frees the old atoms and bonds, which the move assignment would leak.
+    auto& target = static_cast<RDKit::RWMol&>(*orig);
+    target.clear();
+    target = std::move(*mol);
+    return true;
+  } catch (...) {
+    return false;
   }
 }

@@ -13,16 +13,17 @@ from smiles_fp._smiles_fp import (
     bulk_tanimoto_mmap_topk,
     bulk_tanimoto_parallel,
     bulk_tanimoto_parallel_topk,
+    clean,
     internal_tanimoto_mmap,
     internal_tanimoto_parallel,
-    load_fingerprints,
     mols_from_smiles,
     mols_to_smiles,
     save_morgan_fps_from_smiles,
 )
-from smiles_fp.helpers import (
+from smiles_fp.helpers import (  # type: ignore[deprecated]
     get_mols,
     get_morgan_fps,
+    load_fingerprints,
     load_fingerprints_as_ndarray,
     mol_from_smi,
     save_fingerprints,
@@ -35,6 +36,7 @@ __all__ = [
     "bulk_tanimoto_mmap_topk",
     "bulk_tanimoto_parallel",
     "bulk_tanimoto_parallel_topk",
+    "clean",
     "get_mols",
     "get_morgan_fps",
     "internal_tanimoto_mmap",

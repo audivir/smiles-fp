@@ -6,10 +6,11 @@ import struct
 from collections.abc import Sequence
 from multiprocessing import cpu_count
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, TypeAlias, cast, get_args, overload
 
 from rdkit import Chem
 from rdkit.Chem import rdFingerprintGenerator as rdFPGen
+from typing_extensions import deprecated
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -19,28 +20,93 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
     from rdkit.DataStructs import ExplicitBitVect
 
+    from smiles_fp._smiles_fp import Fingerprints
 
+FpOutput: TypeAlias = Literal["bitvect", "unpacked", "packed"]
+"""Format of returned fingerprints: RDKit bit vectors, a uint8 NDArray with one bit per column,
+or a uint64 NDArray of packed 64-bit blocks in little bit order."""
+
+OUTPUTS: tuple[FpOutput, ...] = get_args(FpOutput)
 HEADER_SIZE = 8
 ARRAY_NDIM = 2
 
 
+def pack_bits(bits: NDArray[np.uint8]) -> NDArray[np.uint64]:
+    """Packs a 2D array of 0 and 1 into little-endian 64-bit blocks per row.
+
+    Args:
+        bits: A uint8 NDArray with one bit per column.
+
+    Returns:
+        The blocks, with the last block of each row padded with zeros.
+
+    Raises:
+        ValueError: If the array has values other than 0 or 1.
+    """
+    import numpy as np
+
+    if bits.max() > 1:
+        raise ValueError("Fingerprints must only contain the values 0 and 1")
+    # pads to whole 64-bit blocks, as bits are stored as little-endian blocks.
+    padded: NDArray[np.uint8] = np.pad(bits, ((0, 0), (0, -bits.shape[1] % 64)))
+    return np.packbits(padded, axis=1, bitorder="little").view("<u8")
+
+
+def check_blocks(blocks: NDArray[np.uint64], n_bits: int) -> NDArray[np.uint64]:
+    """Checks packed blocks against the number of bits and converts them to little-endian.
+
+    Args:
+        blocks: A uint64 NDArray with the blocks of each fingerprint per row.
+        n_bits: The number of bits per fingerprint.
+
+    Returns:
+        The contiguous little-endian blocks.
+
+    Raises:
+        ValueError: If the number of blocks does not fit `n_bits` or the padding is not zero.
+    """
+    import numpy as np
+
+    n_blocks = -(-n_bits // 64)
+    if blocks.shape[1] != n_blocks:
+        raise ValueError(
+            f"{n_bits} bits need {n_blocks} blocks, but the array has {blocks.shape[1]}"
+        )
+    little = np.ascontiguousarray(blocks, dtype="<u8")
+    padding = -n_bits % 64
+    if padding and (little[:, -1] >> np.uint64(64 - padding)).any():
+        raise ValueError("The padding bits beyond n_bits must be zero")
+    return little
+
+
 def save_fingerprints(
-    py_fps: Sequence[ExplicitBitVect] | NDArray[np.uint8],
+    py_fps: Fingerprints,
     filename: StrPath,
+    *,
+    n_bits: int | None = None,
 ) -> None:
     """Saves a sequence of fingerprints or a NDArray to a binary file.
 
     All fingerprints must have the same length.
 
     Args:
-        py_fps: A sequence of RDKit fingerprints or an uint8 NDArray.
+        py_fps: A sequence of RDKit fingerprints or an uint8 or uint64 NDArray.
         filename: The path to the output file.
+        n_bits: The number of bits per fingerprint of a packed uint64 NDArray, whose last block
+            may be padded. Required for those arrays and not allowed for other inputs.
 
     Raises:
-        TypeError: If an array is not 2D with dtype uint8.
-        ValueError: If an array has values other than 0 or 1 or no bits per fingerprint.
+        TypeError: If an array is not 2D with dtype uint8 or uint64.
+        ValueError: If an array has values other than 0 or 1 or no bits per fingerprint, or if
+            `n_bits` is missing, unexpected, does not match the blocks, or the padding is not zero.
     """
     import numpy as np
+
+    is_packed = isinstance(py_fps, np.ndarray) and py_fps.dtype.type is np.uint64
+    if is_packed and n_bits is None:
+        raise ValueError("n_bits is required for packed uint64 arrays")
+    if not is_packed and n_bits is not None:
+        raise ValueError("n_bits is only used for packed uint64 arrays")
 
     if not isinstance(py_fps, np.ndarray):
         from smiles_fp._smiles_fp import _save_fingerprints
@@ -48,31 +114,108 @@ def save_fingerprints(
         _save_fingerprints(py_fps, filename)
         return
 
-    if py_fps.ndim != ARRAY_NDIM or py_fps.dtype != np.uint8:
-        raise TypeError("Fingerprint arrays must be 2D with dtype uint8")
-    n_fps, n_bits = py_fps.shape
-    if n_fps >= 2**32 or n_bits >= 2**32:
+    if py_fps.ndim != ARRAY_NDIM or py_fps.dtype.type not in {np.uint8, np.uint64}:
+        raise TypeError("Fingerprint arrays must be 2D with dtype uint8 or uint64")
+    n_fps, width = py_fps.shape
+    bits_per_fp = width if n_bits is None else n_bits
+    if n_fps >= 2**32 or bits_per_fp >= 2**32:
         raise ValueError("Too many fingerprints or bits for the file format (max 2^32-1)")
-    if n_fps == 0:
-        n_bits = 0
-    elif n_bits == 0:
-        raise ValueError("Fingerprints must have at least one bit")
-    elif py_fps.max() > 1:
-        raise ValueError("Fingerprints must only contain the values 0 and 1")
 
-    # pads to whole 64-bit blocks, as bits are stored as little-endian blocks.
-    padded: NDArray[np.uint8] = np.pad(py_fps, ((0, 0), (0, -n_bits % 64)))
-    blocks = np.packbits(padded, axis=1, bitorder="little").view("<u8")
+    blocks: NDArray[np.uint64]
+    if n_fps == 0:
+        bits_per_fp = 0
+        blocks = np.zeros((0, 0), dtype="<u8")
+    elif bits_per_fp < 1:
+        raise ValueError("Fingerprints must have at least one bit")
+    elif is_packed:
+        blocks = check_blocks(cast("NDArray[np.uint64]", py_fps), bits_per_fp)
+    else:
+        blocks = pack_bits(cast("NDArray[np.uint8]", py_fps))
+
     path = Path(filename)
     try:
         with path.open("wb") as file:
-            file.write(struct.pack("<II", n_fps, n_bits))
+            file.write(struct.pack("<II", n_fps, bits_per_fp))
             blocks.tofile(file)
     except BaseException:
         path.unlink(missing_ok=True)
         raise
 
 
+def unpack_blocks(blocks: NDArray[np.uint64], n_bits: int) -> NDArray[np.uint8]:
+    """Unpacks little-endian 64-bit blocks into a uint8 NDArray with one bit per column.
+
+    Args:
+        blocks: A 2D uint64 NDArray with the blocks of each fingerprint per row.
+        n_bits: The number of bits per fingerprint.
+
+    Returns:
+        A contiguous uint8 NDArray with `n_bits` columns.
+    """
+    import numpy as np
+
+    bits = np.unpackbits(blocks.view(np.uint8), axis=1, bitorder="little")
+    return np.ascontiguousarray(bits[:, :n_bits])
+
+
+def check_output(output: str) -> None:
+    """Raises a ValueError if `output` is not one of the fingerprint formats."""
+    if output not in OUTPUTS:
+        raise ValueError(f"output must be one of {', '.join(OUTPUTS)}, not {output!r}")
+
+
+@overload
+def load_fingerprints(
+    filename: StrPath, *, output: Literal["bitvect"] = "bitvect"
+) -> list[ExplicitBitVect]: ...
+@overload
+def load_fingerprints(filename: StrPath, *, output: Literal["unpacked"]) -> NDArray[np.uint8]: ...
+@overload
+def load_fingerprints(filename: StrPath, *, output: Literal["packed"]) -> NDArray[np.uint64]: ...
+def load_fingerprints(
+    filename: StrPath, *, output: FpOutput = "bitvect"
+) -> list[ExplicitBitVect] | NDArray[np.uint8] | NDArray[np.uint64]:
+    """Loads a sequence of fingerprints from a binary file created with `save_fingerprints`.
+
+    Args:
+        filename: The path to the binary fingerprint file.
+        output: The format of the fingerprints: a list of RDKit bit vectors, an unpacked uint8
+            NDArray with one bit per column, or a packed uint64 NDArray of 64-bit blocks, whose
+            last block may be padded with zeros.
+
+    Returns:
+        A list of RDKit ExplicitBitVect objects or a NDArray.
+
+    Raises:
+        ValueError: If `output` is unknown or the file is truncated or corrupt.
+    """
+    import numpy as np
+
+    check_output(output)
+    if output == "bitvect":
+        from smiles_fp._smiles_fp import _load_fingerprints
+
+        return _load_fingerprints(filename)
+
+    with Path(filename).open("rb") as file:
+        header = file.read(HEADER_SIZE)
+        if len(header) < HEADER_SIZE:
+            raise ValueError("Corrupt or truncated fingerprint file: missing header")
+        n_fps, n_bits = struct.unpack("<II", header)
+        if n_fps == 0:
+            return np.zeros((0, 0), dtype=np.uint8 if output == "unpacked" else np.uint64)
+        n_blocks = -(-n_bits // 64)
+        blocks = np.fromfile(file, dtype="<u8", count=n_fps * n_blocks)
+    if blocks.size != n_fps * n_blocks:
+        raise ValueError(
+            f"Corrupt or truncated fingerprint file: header declares {n_fps} fingerprints of "
+            f"{n_bits} bits"
+        )
+    matrix = blocks.reshape(n_fps, n_blocks)
+    return unpack_blocks(matrix, n_bits) if output == "unpacked" else matrix
+
+
+@deprecated("Use `load_fingerprints(filename, output='unpacked')` instead.")
 def load_fingerprints_as_ndarray(
     filename: StrPath,
 ) -> NDArray[np.uint8]:
@@ -87,24 +230,7 @@ def load_fingerprints_as_ndarray(
     Raises:
         ValueError: If the file is truncated or corrupt.
     """
-    import numpy as np
-
-    with Path(filename).open("rb") as file:
-        header = file.read(HEADER_SIZE)
-        if len(header) < HEADER_SIZE:
-            raise ValueError("Corrupt or truncated fingerprint file: missing header")
-        n_fps, n_bits = struct.unpack("<II", header)
-        if n_fps == 0:
-            return np.zeros((0, 0), dtype=np.uint8)
-        n_blocks = -(-n_bits // 64)
-        blocks = np.fromfile(file, dtype="<u8", count=n_fps * n_blocks)
-    if blocks.size != n_fps * n_blocks:
-        raise ValueError(
-            f"Corrupt or truncated fingerprint file: header declares {n_fps} fingerprints of "
-            f"{n_bits} bits"
-        )
-    bits = np.unpackbits(blocks.view(np.uint8).reshape(n_fps, -1), axis=1, bitorder="little")
-    return np.ascontiguousarray(bits[:, :n_bits])
+    return load_fingerprints(filename, output="unpacked")
 
 
 def to_matrix(vector: NDArray[np.float64], n: int, diagonal: float = 0.0) -> NDArray[np.float64]:
@@ -185,9 +311,41 @@ def get_mols(
     return mols  # type: ignore[return-value]
 
 
+@overload
 def get_morgan_fps(
-    mols: Sequence[Chem.Mol], radius: int = 2, n_bits: int = 2048, n_threads: int = -1
-) -> tuple[ExplicitBitVect, ...]:
+    mols: Sequence[Chem.Mol],
+    radius: int = 2,
+    n_bits: int = 2048,
+    n_threads: int = -1,
+    *,
+    output: Literal["bitvect"] = "bitvect",
+) -> tuple[ExplicitBitVect, ...]: ...
+@overload
+def get_morgan_fps(
+    mols: Sequence[Chem.Mol],
+    radius: int = 2,
+    n_bits: int = 2048,
+    n_threads: int = -1,
+    *,
+    output: Literal["unpacked"],
+) -> NDArray[np.uint8]: ...
+@overload
+def get_morgan_fps(
+    mols: Sequence[Chem.Mol],
+    radius: int = 2,
+    n_bits: int = 2048,
+    n_threads: int = -1,
+    *,
+    output: Literal["packed"],
+) -> NDArray[np.uint64]: ...
+def get_morgan_fps(
+    mols: Sequence[Chem.Mol],
+    radius: int = 2,
+    n_bits: int = 2048,
+    n_threads: int = -1,
+    *,
+    output: FpOutput = "bitvect",
+) -> tuple[ExplicitBitVect, ...] | NDArray[np.uint8] | NDArray[np.uint64]:
     """Converts RDKit molecules to Morgan fingerprints.
 
     Args:
@@ -195,11 +353,28 @@ def get_morgan_fps(
         radius: Radius of the fingerprint.
         n_bits: Size of the fingerprint.
         n_threads: Number of threads. Defaults to -1 (auto-detect).
+        output: The format of the fingerprints: a tuple of RDKit bit vectors, an unpacked uint8
+            NDArray with one bit per column, or a packed uint64 NDArray of 64-bit blocks, whose
+            last block may be padded with zeros.
 
     Returns:
-        A tuple of Morgan fingerprints.
+        A tuple of Morgan fingerprints or a NDArray.
+
+    Raises:
+        ValueError: If `output` is unknown.
     """
+    import numpy as np
+
+    check_output(output)
     n_threads = n_threads if n_threads > 0 else cpu_count()
     morgan_gen = rdFPGen.GetMorganGenerator(radius=radius, fpSize=n_bits)
     fps: tuple[ExplicitBitVect, ...] = morgan_gen.GetFingerprints(mols, numThreads=n_threads)
-    return fps
+    if output == "bitvect":
+        return fps
+
+    from smiles_fp._smiles_fp import _fingerprints_to_blocks
+
+    blocks = (
+        _fingerprints_to_blocks(fps) if fps else np.zeros((0, -(-n_bits // 64)), dtype=np.uint64)
+    )
+    return unpack_blocks(blocks, n_bits) if output == "unpacked" else blocks

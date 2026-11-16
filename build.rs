@@ -108,6 +108,8 @@ fn main() {
     println!("cargo:rustc-link-lib=RDKitGraphMol");
     println!("cargo:rustc-link-lib=RDKitSmilesParse");
     println!("cargo:rustc-link-lib=RDKitFingerprints");
+    println!("cargo:rustc-link-lib=RDKitChemTransforms");
+    println!("cargo:rustc-link-lib=RDKitMolStandardize");
     println!("cargo:rustc-link-lib={}", boost_link_name);
 
     // Injecting rpath
@@ -120,6 +122,7 @@ fn main() {
     // Rebuild Triggers
     println!("cargo:rerun-if-changed=src/lib.rs");
     println!("cargo:rerun-if-changed=src/rdkit_shim.cpp");
+    println!("cargo:rerun-if-changed=src/salts.txt");
     println!("cargo:rerun-if-changed=smiles-fp-pypi/build_env.py");
     println!("cargo:rerun-if-env-changed=RDKIT_VERSION");
     println!("cargo:rerun-if-env-changed=PYO3_PYTHON");
