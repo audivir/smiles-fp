@@ -436,7 +436,8 @@ static bool clean_mol(Cleaner& c, std::unique_ptr<RDKit::RWMol>& mol) {
 }
 
 // writes the SMILES of a cleaned molecule and, with `verify`, checks that it parses again. Returns
-// an empty SMILES otherwise. With `want_mol`, `mol` owns the molecule parsed from the written SMILES.
+// an empty SMILES otherwise. With `want_mol`, `mol` owns the molecule parsed from the written
+// SMILES.
 static Cleaned write_checked(const Cleaner& c, const RDKit::ROMol& mol, bool want_mol) {
   Cleaned result{rust::String(), 0};
   const std::string out = RDKit::MolToSmiles(mol, c.opts.isomeric);
@@ -444,6 +445,7 @@ static Cleaned write_checked(const Cleaner& c, const RDKit::ROMol& mol, bool wan
     if (!out.empty()) result.smiles = rust::String(out.data(), out.size());
     return result;
   }
+  // the written SMILES may not parse, e.g. F[P-](F)(F)(F)(F)F fails with uncharging.
   std::unique_ptr<RDKit::RWMol> check(RDKit::SmilesToMol(out));
   if (out.empty() || !check || check->getNumAtoms() == 0) return result;
   result.smiles = rust::String(out.data(), out.size());
@@ -479,7 +481,8 @@ Cleaned clean_mol_raw(size_t cleaner, size_t mol_ptr, bool want_smiles) {
     auto* c = reinterpret_cast<Cleaner*>(cleaner);
     if (!clean_mol(*c, mol)) return Cleaned{rust::String(), 0};
     if (want_smiles) return write_checked(*c, *mol, false);
-    return Cleaned{rust::String(), reinterpret_cast<size_t>(static_cast<RDKit::ROMol*>(mol.release()))};
+    auto cleaned = reinterpret_cast<size_t>(static_cast<RDKit::ROMol*>(mol.release()));
+    return Cleaned{rust::String(), cleaned};
   } catch (...) {
     return Cleaned{rust::String(), 0};
   }
