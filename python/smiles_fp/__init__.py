@@ -1,9 +1,12 @@
-"""SmilesFp module."""
+"""Rust-accelerated Tanimoto similarity search over RDKit Morgan fingerprints."""
 
 from __future__ import annotations
 
-# initialize dynamic libraries
+# initialize dynamic libraries: RDKit libraries have no RUNPATH on Linux, so the dependencies of
+# the linked libraries must already be loaded by the RDKit modules.
 import rdkit  # noqa: F401
+from rdkit import Chem  # noqa: F401
+from rdkit.Chem import rdFingerprintGenerator  # noqa: F401
 
 from smiles_fp._smiles_fp import (
     bulk_tanimoto_mmap,
@@ -13,9 +16,18 @@ from smiles_fp._smiles_fp import (
     internal_tanimoto_mmap,
     internal_tanimoto_parallel,
     load_fingerprints,
-    save_fingerprints,
+    mols_from_smiles,
+    mols_to_smiles,
+    save_morgan_fps_from_smiles,
 )
-from smiles_fp.helpers import get_mols, get_morgan_fps, mol_from_smi, to_matrix
+from smiles_fp.helpers import (
+    get_mols,
+    get_morgan_fps,
+    load_fingerprints_as_ndarray,
+    mol_from_smi,
+    save_fingerprints,
+    to_matrix,
+)
 from smiles_fp.search import similarity_search, windowed_bulk_tanimoto
 
 __all__ = [
@@ -28,8 +40,12 @@ __all__ = [
     "internal_tanimoto_mmap",
     "internal_tanimoto_parallel",
     "load_fingerprints",
+    "load_fingerprints_as_ndarray",
     "mol_from_smi",
+    "mols_from_smiles",
+    "mols_to_smiles",
     "save_fingerprints",
+    "save_morgan_fps_from_smiles",
     "similarity_search",
     "to_matrix",
     "windowed_bulk_tanimoto",

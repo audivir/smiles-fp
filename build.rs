@@ -1,5 +1,24 @@
 use std::env;
+use std::fs;
 use std::process::Command;
+
+/// Checks whether the RDKit SMILES parser library exports `std::string` arguments with the
+/// pre-C++11 libstdc++ ABI, which the mangled name `ERKSs` (`const std::string&`) marks.
+fn uses_old_string_abi(lib_dir: &str) -> bool {
+    let needle = b"SmilesParse13MolFromSmilesERKSs";
+    let Ok(entries) = fs::read_dir(lib_dir) else {
+        return false;
+    };
+    entries
+        .flatten()
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with("libRDKitSmilesParse")
+        })
+        .filter_map(|e| fs::read(e.path()).ok())
+        .any(|bytes| bytes.windows(needle.len()).any(|w| w == needle))
+}
 
 fn main() {
     let rdkit_ver = env::var("RDKIT_VERSION").unwrap();
@@ -65,12 +84,18 @@ fn main() {
     }
 
     // Compile C++ Shim
-    cxx_build::bridge("src/lib.rs")
+    let mut build = cxx_build::bridge("src/lib.rs");
+    if env::consts::OS == "linux" && uses_old_string_abi(&pip_lib_dir) {
+        // older RDKit wheels are built with the pre-C++11 libstdc++ string ABI, so std::string
+        // arguments only link when the shim uses the same one.
+        build.define("_GLIBCXX_USE_CXX11_ABI", "0");
+    }
+    build
         .file("src/rdkit_shim.cpp")
         .include(&boost_include_dir) // Boost headers (boost-headers PyPI package)
         .include(&rdkit_include_dir) // RDKit headers (rdkit-headers PyPI package)
         .include(&python_include_dir) // Python C headers
-        .flag_if_supported("-std=c++17")
+        .flag_if_supported("-std=c++20")
         .flag_if_supported("-O3")
         .flag_if_supported("-Wno-unused-parameter")
         .flag_if_supported("-Wno-missing-field-initializers")
@@ -80,6 +105,9 @@ fn main() {
     println!("cargo:rustc-link-search=native={}", pip_lib_dir);
     println!("cargo:rustc-link-lib=RDKitDataStructs");
     println!("cargo:rustc-link-lib=RDKitRDGeneral");
+    println!("cargo:rustc-link-lib=RDKitGraphMol");
+    println!("cargo:rustc-link-lib=RDKitSmilesParse");
+    println!("cargo:rustc-link-lib=RDKitFingerprints");
     println!("cargo:rustc-link-lib={}", boost_link_name);
 
     // Injecting rpath

@@ -4,12 +4,18 @@ use numpy::{
     ndarray::{Array1, Array2},
 };
 use pyo3::{
-    exceptions::{PyRuntimeError, PyValueError},
+    exceptions::{PyOSError, PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
     types::{PyAny, PyList, PyModule, PySequence, PyTuple},
 };
 use rayon::prelude::*;
-use std::{cmp::Reverse, collections::BinaryHeap, fs::File, io::Read, path::PathBuf};
+use std::{
+    cmp::Reverse,
+    collections::{BinaryHeap, HashMap},
+    fs::File,
+    io::{BufWriter, Read, Write},
+    path::PathBuf,
+};
 
 /// Thread-safe pointer wrapper
 #[derive(Copy, Clone)]
@@ -69,6 +75,11 @@ fn setup_local_pool(n_threads: i32) -> Result<rayon::ThreadPool, String> {
         .map_err(|e| format!("Failed to build thread pool: {}", e))
 }
 
+/// Runs `f` on Rayon pool with GIL released, so `f` must not touch Python.
+fn run_pool<R: Send, F: FnOnce() -> R + Send>(py: Python<'_>, pool: &rayon::ThreadPool, f: F) -> R {
+    py.detach(|| pool.install(f))
+}
+
 /// Aggregation methods
 enum Agg {
     Mean,
@@ -81,6 +92,22 @@ enum Agg {
 /// FFI boundary with C++
 #[cxx::bridge]
 mod ffi {
+    /// Container for `Chem.MolToSmiles` arguments, in the same order as RDKit.
+    struct SmilesOpts {
+        isomeric_smiles: bool,
+        kekule_smiles: bool,
+        rooted_at_atom: i32,
+        canonical: bool,
+        all_bonds_explicit: bool,
+        all_hs_explicit: bool,
+        ignore_atom_map_numbers: bool,
+    }
+
+    struct MolPtrs {
+        keepalive: usize,
+        ptrs: Vec<usize>,
+    }
+
     struct FpBatch {
         n_fps: u32,
         n_bits: u32,
@@ -90,17 +117,42 @@ mod ffi {
     unsafe extern "C++" {
         include!("smiles_fp/src/rdkit_shim.h");
 
-        fn write_rdkit_bit_vects_to_file(py_list_ptr: usize, filename: &str);
-        fn extract_rdkit_bit_vects(py_list_ptr: usize) -> FpBatch;
+        fn write_rdkit_bit_vects_to_file(py_list_ptr: usize, filename: &str) -> Result<()>;
+        fn extract_rdkit_bit_vects(py_list_ptr: usize) -> Result<FpBatch>;
         fn create_rdkit_bit_vects(n_fps: u32, n_bits: u32, blocks: &[u64]) -> usize;
+        fn parse_smiles_raw(smiles: &str, sanitize: bool) -> usize;
+        fn wrap_mols(ptrs: &[usize]) -> usize;
+        fn extract_mol_ptrs(py_seq_ptr: usize) -> Result<MolPtrs>;
+        fn mol_to_smiles_raw(mol_ptr: usize, opts: &SmilesOpts) -> Result<String>;
+        fn clone_mol_raw(mol_ptr: usize) -> Result<usize>;
+        fn free_mol_raw(mol_ptr: usize);
+        fn make_morgan_generator(radius: u32, n_bits: u32) -> Result<usize>;
+        fn free_morgan_generator(generator: usize);
+        fn smiles_to_fp_blocks(generator: usize, smiles: &str, out: &mut [u64]) -> i32;
+    }
+}
+
+/// Converts C++ exception into Python error.
+///
+/// Returns the pending Python exception if C++ left one, which keeps its original type and message.
+fn ffi_error(py: Python<'_>, e: cxx::Exception, os_error: bool) -> PyErr {
+    if let Some(err) = PyErr::take(py) {
+        return err;
+    }
+    let msg = e.what().to_string();
+    if os_error {
+        PyOSError::new_err(msg)
+    } else {
+        PyRuntimeError::new_err(msg)
     }
 }
 
 impl FpBatch {
-    /// Extract the Rust struct from the Python sequence
+    /// Extracts fingerprints from Python sequence, raising on invalid input.
     #[inline(always)]
-    fn from_py_seq(py_seq: &Bound<'_, PySequence>) -> Self {
-        ffi::extract_rdkit_bit_vects(py_seq.as_ptr() as usize)
+    fn from_py_seq(py_seq: &Bound<'_, PySequence>) -> PyResult<Self> {
+        let py = py_seq.py();
+        ffi::extract_rdkit_bit_vects(py_seq.as_ptr() as usize).map_err(|e| ffi_error(py, e, false))
     }
 }
 
@@ -165,6 +217,19 @@ fn setup_mmap<'py>(
 
     let n_bits = u32::from_le_bytes(mmap[4..8].try_into().unwrap()) as usize;
 
+    // guards against reading past the end of the mapping, as slices built later trust the header.
+    let expected_len = get_n_blocks(n_bits)
+        .checked_mul(total_n_fps)
+        .and_then(|n| n.checked_mul(8))
+        .and_then(|n| n.checked_add(8));
+    if expected_len.is_none_or(|expected| mmap.len() < expected) {
+        return Err(PyValueError::new_err(format!(
+            "Corrupt or truncated fingerprint file: header declares {total_n_fps} fingerprints of \
+             {n_bits} bits, but the file has only {} bytes",
+            mmap.len()
+        )));
+    }
+
     let start_index = db_offset.min(total_n_fps);
     let n_fps = if db_limit == 0 {
         total_n_fps - start_index
@@ -197,7 +262,7 @@ fn pooled_similarity<'py>(
             let mut out_scores = vec![0.0f64; n_fps1 * k_actual];
 
             if k_actual > 0 {
-                pool.install(|| {
+                run_pool(py, &pool, || {
                     out_indices
                         .par_chunks_mut(k_actual)
                         .zip(out_scores.par_chunks_mut(k_actual))
@@ -251,7 +316,7 @@ fn pooled_similarity<'py>(
         }
         Agg::Mean | Agg::Max | Agg::Min => {
             let mut results = vec![0.0f64; n_fps1];
-            pool.install(|| {
+            run_pool(py, &pool, || {
                 results.par_iter_mut().enumerate().for_each(|(i, out)| {
                     let fp1 = &data1[i * n_blocks..(i + 1) * n_blocks];
                     let pop1: u32 = fp1.iter().map(|b| b.count_ones()).sum();
@@ -286,7 +351,7 @@ fn pooled_similarity<'py>(
         }
         Agg::Full => {
             let mut results = vec![0.0f64; n_fps1 * n_fps2];
-            pool.install(|| {
+            run_pool(py, &pool, || {
                 results
                     .par_chunks_mut(n_fps2)
                     .enumerate()
@@ -331,7 +396,7 @@ fn pooled_internal_similarity<'py>(
         )),
         Agg::Mean | Agg::Max | Agg::Min => {
             let mut results = vec![0.0f64; n_fps];
-            pool.install(|| {
+            run_pool(py, &pool, || {
                 results.par_iter_mut().enumerate().for_each(|(i, out)| {
                     let fp1 = &data[i * n_blocks..(i + 1) * n_blocks];
                     let pop1 = popcounts[i];
@@ -378,7 +443,7 @@ fn pooled_internal_similarity<'py>(
             let mut results = vec![0.0f64; n_pairs];
             let res_ptr = SyncPtr(results.as_mut_ptr());
 
-            pool.install(|| {
+            run_pool(py, &pool, || {
                 (0..n_fps).into_par_iter().for_each(move |i| {
                     let ptr = res_ptr; // forces the closure to capture the thread-safe SyncPtr
 
@@ -407,11 +472,15 @@ fn pooled_internal_similarity<'py>(
 }
 
 #[pyfunction]
+#[pyo3(name = "_save_fingerprints")]
 fn save_fingerprints<'py>(fps: &Bound<'py, PySequence>, path: &Bound<'py, PyAny>) -> PyResult<()> {
+    let py = fps.py();
     let path_buf: PathBuf = path.extract()?;
-    let path_str = path_buf.to_string_lossy();
-    ffi::write_rdkit_bit_vects_to_file(fps.as_ptr() as usize, &path_str);
-    Ok(())
+    let path_str = path_buf
+        .to_str()
+        .ok_or_else(|| PyValueError::new_err("path is not valid UTF-8"))?;
+    ffi::write_rdkit_bit_vects_to_file(fps.as_ptr() as usize, path_str)
+        .map_err(|e| ffi_error(py, e, true))
 }
 
 #[pyfunction]
@@ -432,20 +501,306 @@ fn load_fingerprints<'py>(
         return Ok(PyList::empty(py).into_any());
     }
 
-    let mut data = vec![0u64; (n_fps * n_blocks) as usize];
+    let n_words = (n_fps as usize) * (n_blocks as usize);
+    let expected_len = n_words.checked_mul(8).and_then(|n| n.checked_add(8));
+    if expected_len
+        .is_none_or(|expected| file.metadata().map_or(true, |m| m.len() < expected as u64))
+    {
+        return Err(PyValueError::new_err(format!(
+            "Corrupt or truncated fingerprint file: header declares {n_fps} fingerprints of \
+             {n_bits} bits"
+        )));
+    }
+
+    let mut data = vec![0u64; n_words];
     let bytes =
         unsafe { std::slice::from_raw_parts_mut(data.as_mut_ptr() as *mut u8, data.len() * 8) };
     file.read_exact(bytes)?;
 
     let ptr_val = ffi::create_rdkit_bit_vects(n_fps, n_bits, &data);
     if ptr_val == 0 {
-        return Err(PyRuntimeError::new_err(
-            "Failed to construct fingerprints in C++",
-        ));
+        return Err(PyErr::take(py).unwrap_or_else(|| {
+            PyRuntimeError::new_err("Failed to construct fingerprints in C++")
+        }));
     }
 
     let py_list = unsafe { Bound::from_owned_ptr(py, ptr_val as *mut pyo3::ffi::PyObject) };
     Ok(py_list.into_any())
+}
+
+/// Computes Morgan fingerprints of SMILES strings on real threads and saves them to a file.
+///
+/// No Python objects are created, so memory stays at the size of the fingerprints.
+///
+/// # Errors
+///
+/// Returns `Err` if a SMILES cannot be parsed, naming the first one, or if the file cannot be
+/// written. No file is left behind on failure.
+#[pyfunction]
+#[pyo3(signature = (smiles, path, radius=2, n_bits=2048, *, n_threads=-1))]
+fn save_morgan_fps_from_smiles(
+    py: Python<'_>,
+    smiles: Vec<String>,
+    path: PathBuf,
+    radius: u32,
+    n_bits: u32,
+    n_threads: i32,
+) -> PyResult<()> {
+    if n_bits == 0 {
+        return Err(PyValueError::new_err("n_bits must be positive"));
+    }
+    let n_fps = u32::try_from(smiles.len()).map_err(|_| {
+        PyValueError::new_err("Too many fingerprints for the file format (max 2^32-1)")
+    })?;
+    let n_blocks = (n_bits as usize).div_ceil(64);
+    let pool = setup_local_pool(n_threads).map_err(PyRuntimeError::new_err)?;
+    let generator = ffi::make_morgan_generator(radius, n_bits)
+        .map_err(|e| PyRuntimeError::new_err(e.what().to_string()))?;
+
+    let mut blocks = vec![0u64; smiles.len() * n_blocks];
+    let failed: Vec<bool> = run_pool(py, &pool, || {
+        blocks
+            .par_chunks_mut(n_blocks)
+            .zip(smiles.par_iter())
+            .map(|(out, smi)| ffi::smiles_to_fp_blocks(generator, smi, out) != 0)
+            .collect()
+    });
+    ffi::free_morgan_generator(generator);
+    if let Some(i) = failed.iter().position(|&f| f) {
+        return Err(PyValueError::new_err(format!(
+            "Could not convert SMILES {i}: {}",
+            smiles[i]
+        )));
+    }
+
+    let write = || -> std::io::Result<()> {
+        let mut out = BufWriter::new(File::create(&path)?);
+        out.write_all(&n_fps.to_le_bytes())?;
+        out.write_all(&(if n_fps == 0 { 0 } else { n_bits }).to_le_bytes())?;
+        for block in &blocks {
+            out.write_all(&block.to_le_bytes())?;
+        }
+        out.flush()
+    };
+    write().inspect_err(|_| {
+        let _ = std::fs::remove_file(&path);
+    })?;
+    Ok(())
+}
+
+/// Target number of write units per thread before `mols_to_smiles` stops splitting molecules.
+const UNITS_PER_THREAD: usize = 4;
+
+/// Result of one write: task index, slot within the task, and the SMILES or error message.
+type WrittenItem = (usize, usize, Result<String, String>);
+
+/// Container for one `ROMol` (original or private copy) and the (task, slot, root) items it writes.
+struct WriteUnit {
+    ptr: usize,
+    items: Vec<(usize, usize, i32)>,
+}
+
+/// Wrapper around private molecule copies that frees them on drop.
+struct OwnedMols(Vec<usize>);
+
+impl Drop for OwnedMols {
+    fn drop(&mut self) {
+        for &p in &self.0 {
+            ffi::free_mol_raw(p);
+        }
+    }
+}
+
+/// Expands `rooted_at_atom` to one root atom per molecule, with -1 meaning no rooting.
+///
+/// # Errors
+///
+/// Returns `Err` if the argument is not an int, `None`, or a sequence of `int | None`, or if the
+/// sequence length differs from the number of molecules.
+fn parse_roots(arg: Option<&Bound<'_, PyAny>>, n: usize) -> PyResult<Vec<i32>> {
+    let Some(arg) = arg.filter(|a| !a.is_none()) else {
+        return Ok(vec![-1; n]);
+    };
+    if let Ok(root) = arg.extract::<i32>() {
+        return Ok(vec![root; n]);
+    }
+    let roots: Vec<Option<i32>> = arg.extract().map_err(|_| {
+        PyTypeError::new_err("rooted_at_atom must be an int, None or a sequence of int | None")
+    })?;
+    if roots.len() != n {
+        return Err(PyValueError::new_err(format!(
+            "rooted_at_atom has {} items for {n} molecules",
+            roots.len()
+        )));
+    }
+    Ok(roots.into_iter().map(|r| r.unwrap_or(-1)).collect())
+}
+
+/// Writes SMILES for every molecule on real threads with GIL held.
+///
+/// The `doRandom` option is unsupported because the random generator of RDKit is global and not
+/// thread-safe.
+#[pyfunction]
+#[pyo3(signature = (
+    mols,
+    isomeric_smiles=true,
+    kekule_smiles=false,
+    rooted_at_atom=None,
+    canonical=true,
+    all_bonds_explicit=false,
+    all_hs_explicit=false,
+    *,
+    ignore_atom_map_numbers=false,
+    n_threads=-1
+))]
+#[allow(clippy::too_many_arguments)]
+fn mols_to_smiles<'py>(
+    py: Python<'py>,
+    mols: &Bound<'py, PySequence>,
+    isomeric_smiles: bool,
+    kekule_smiles: bool,
+    rooted_at_atom: Option<&Bound<'py, PyAny>>,
+    canonical: bool,
+    all_bonds_explicit: bool,
+    all_hs_explicit: bool,
+    ignore_atom_map_numbers: bool,
+    n_threads: i32,
+) -> PyResult<Bound<'py, PyList>> {
+    let pool = setup_local_pool(n_threads).map_err(PyRuntimeError::new_err)?;
+    let batch =
+        ffi::extract_mol_ptrs(mols.as_ptr() as usize).map_err(|e| ffi_error(py, e, false))?;
+    // owns the reference to the molecule sequence until all SMILES are written.
+    let keepalive: Bound<'py, PyAny> =
+        unsafe { Bound::from_owned_ptr(py, batch.keepalive as *mut pyo3::ffi::PyObject) };
+    let roots = parse_roots(rooted_at_atom, batch.ptrs.len())?;
+
+    // `MolToSmiles` aborts or segfaults when threads share one `ROMol`, so each distinct molecule
+    // is one task for one thread. That thread writes every distinct root requested for the
+    // molecule, and results are fanned out to all positions.
+    let mut task_of: HashMap<usize, usize> = HashMap::with_capacity(batch.ptrs.len());
+    let mut cell_of: HashMap<(usize, i32), usize> = HashMap::new();
+    let mut tasks: Vec<(usize, Vec<i32>)> = Vec::new();
+    let positions: Vec<(usize, usize)> = batch
+        .ptrs
+        .iter()
+        .zip(&roots)
+        .map(|(&ptr, &root)| {
+            let t = *task_of.entry(ptr).or_insert_with(|| {
+                tasks.push((ptr, Vec::new()));
+                tasks.len() - 1
+            });
+            let k = *cell_of.entry((t, root)).or_insert_with(|| {
+                tasks[t].1.push(root);
+                tasks[t].1.len() - 1
+            });
+            (t, k)
+        })
+        .collect();
+    // private copies let several threads write one molecule, one chunk of roots per copy. Copies
+    // are made here, serially, as copying a shared `ROMol` from several threads is not known to be
+    // safe. They are made only when distinct molecules cannot keep all threads busy, because
+    // otherwise they add serial work.
+    let n_pool_threads = pool.current_num_threads();
+    let copies_wanted = (UNITS_PER_THREAD * n_pool_threads).div_ceil(tasks.len().max(1));
+    let mut owned = OwnedMols(Vec::new());
+    let mut units: Vec<WriteUnit> = Vec::with_capacity(tasks.len());
+    for (t, (ptr, task_roots)) in tasks.iter().enumerate() {
+        let n_chunks = copies_wanted.min(task_roots.len()).max(1);
+        let chunk_len = task_roots.len().div_ceil(n_chunks);
+        for (c, chunk) in task_roots.chunks(chunk_len).enumerate() {
+            let unit_ptr = if c == 0 {
+                *ptr
+            } else {
+                let copy = ffi::clone_mol_raw(*ptr)
+                    .map_err(|e| PyRuntimeError::new_err(e.what().to_string()))?;
+                owned.0.push(copy);
+                copy
+            };
+            units.push(WriteUnit {
+                ptr: unit_ptr,
+                items: chunk
+                    .iter()
+                    .enumerate()
+                    .map(|(j, &root)| (t, c * chunk_len + j, root))
+                    .collect(),
+            });
+        }
+    }
+    // the GIL stays held, so no other Python thread can modify the molecules during the write.
+    let written: Vec<Vec<WrittenItem>> = pool.install(|| {
+        // each unit owns its `ROMol`, so no two threads touch the same one.
+        units
+            .par_iter()
+            .map(|unit| {
+                unit.items
+                    .iter()
+                    .map(|&(t, k, root)| {
+                        let opts = ffi::SmilesOpts {
+                            isomeric_smiles,
+                            kekule_smiles,
+                            rooted_at_atom: root,
+                            canonical,
+                            all_bonds_explicit,
+                            all_hs_explicit,
+                            ignore_atom_map_numbers,
+                        };
+                        let smi = ffi::mol_to_smiles_raw(unit.ptr, &opts)
+                            .map_err(|e| e.what().to_string());
+                        (t, k, smi)
+                    })
+                    .collect()
+            })
+            .collect()
+    });
+    let mut results: Vec<Vec<Option<Result<String, String>>>> =
+        tasks.iter().map(|(_, r)| vec![None; r.len()]).collect();
+    for (t, k, smi) in written.into_iter().flatten() {
+        results[t][k] = Some(smi);
+    }
+    drop(keepalive);
+
+    let mut smiles = Vec::with_capacity(positions.len());
+    for (i, &(t, k)) in positions.iter().enumerate() {
+        match results[t][k]
+            .as_ref()
+            .expect("every (molecule, root) is written")
+        {
+            Ok(smi) => smiles.push(smi.clone()),
+            Err(e) => {
+                return Err(PyRuntimeError::new_err(format!(
+                    "MolToSmiles failed for molecule {i}: {e}"
+                )));
+            }
+        }
+    }
+    PyList::new(py, smiles)
+}
+
+/// Parses SMILES strings on real threads with GIL released.
+///
+/// Returns `None` for each SMILES that fails to parse.
+#[pyfunction]
+#[pyo3(signature = (smiles, sanitize=true, *, n_threads=-1))]
+fn mols_from_smiles<'py>(
+    py: Python<'py>,
+    smiles: Vec<String>,
+    sanitize: bool,
+    n_threads: i32,
+) -> PyResult<Bound<'py, PyAny>> {
+    let pool = setup_local_pool(n_threads).map_err(PyRuntimeError::new_err)?;
+    let ptrs: Vec<usize> = run_pool(py, &pool, || {
+        smiles
+            .par_iter()
+            .map(|s| ffi::parse_smiles_raw(s, sanitize))
+            .collect()
+    });
+    let ptr_val = ffi::wrap_mols(&ptrs);
+    if ptr_val == 0 {
+        return Err(PyErr::take(py)
+            .unwrap_or_else(|| PyRuntimeError::new_err("Failed to wrap molecules in C++")));
+    }
+    let list = unsafe { Bound::from_owned_ptr(py, ptr_val as *mut pyo3::ffi::PyObject) };
+    Ok(list.into_any())
 }
 
 #[pyfunction]
@@ -458,8 +813,8 @@ fn bulk_tanimoto_parallel<'py>(
     agg: Option<String>,
 ) -> PyResult<Bound<'py, PyAny>> {
     let agg = parse_agg(agg)?;
-    let fps1 = FpBatch::from_py_seq(py_fps);
-    let fps2 = FpBatch::from_py_seq(py_fps2);
+    let fps1 = FpBatch::from_py_seq(py_fps)?;
+    let fps2 = FpBatch::from_py_seq(py_fps2)?;
 
     let n_fps1 = fps1.n_fps as usize;
     let n_fps2 = fps2.n_fps as usize;
@@ -499,8 +854,8 @@ fn bulk_tanimoto_parallel_topk<'py>(
     k: usize,
     n_threads: i32,
 ) -> PyResult<Bound<'py, PyAny>> {
-    let fps1 = FpBatch::from_py_seq(py_fps);
-    let fps2 = FpBatch::from_py_seq(py_fps2);
+    let fps1 = FpBatch::from_py_seq(py_fps)?;
+    let fps2 = FpBatch::from_py_seq(py_fps2)?;
 
     let n_fps1 = fps1.n_fps as usize;
     let n_fps2 = fps2.n_fps as usize;
@@ -641,7 +996,7 @@ fn internal_tanimoto_parallel<'py>(
     agg: Option<String>,
 ) -> PyResult<Bound<'py, PyAny>> {
     let agg = parse_agg(agg)?;
-    let fps = FpBatch::from_py_seq(py_fps);
+    let fps = FpBatch::from_py_seq(py_fps)?;
     let n_fps = fps.n_fps as usize;
 
     if n_fps == 0 {
@@ -690,6 +1045,9 @@ fn internal_tanimoto_mmap<'py>(
 fn _smiles_fp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(save_fingerprints, m)?)?;
     m.add_function(wrap_pyfunction!(load_fingerprints, m)?)?;
+    m.add_function(wrap_pyfunction!(mols_from_smiles, m)?)?;
+    m.add_function(wrap_pyfunction!(mols_to_smiles, m)?)?;
+    m.add_function(wrap_pyfunction!(save_morgan_fps_from_smiles, m)?)?;
     m.add_function(wrap_pyfunction!(bulk_tanimoto_parallel, m)?)?;
     m.add_function(wrap_pyfunction!(bulk_tanimoto_parallel_topk, m)?)?;
     m.add_function(wrap_pyfunction!(bulk_tanimoto_mmap, m)?)?;
