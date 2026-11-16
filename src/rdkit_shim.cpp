@@ -435,11 +435,15 @@ static bool clean_mol(Cleaner& c, std::unique_ptr<RDKit::RWMol>& mol) {
   return mol->getNumAtoms() > 0;
 }
 
-// writes the SMILES of a cleaned molecule and checks that it parses again. Returns an empty SMILES
-// otherwise. With `want_mol`, `mol` owns the molecule parsed from the written SMILES.
+// writes the SMILES of a cleaned molecule and, with `verify`, checks that it parses again. Returns
+// an empty SMILES otherwise. With `want_mol`, `mol` owns the molecule parsed from the written SMILES.
 static Cleaned write_checked(const Cleaner& c, const RDKit::ROMol& mol, bool want_mol) {
   Cleaned result{rust::String(), 0};
   const std::string out = RDKit::MolToSmiles(mol, c.opts.isomeric);
+  if (!want_mol && !c.opts.verify) {
+    if (!out.empty()) result.smiles = rust::String(out.data(), out.size());
+    return result;
+  }
   std::unique_ptr<RDKit::RWMol> check(RDKit::SmilesToMol(out));
   if (out.empty() || !check || check->getNumAtoms() == 0) return result;
   result.smiles = rust::String(out.data(), out.size());

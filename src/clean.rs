@@ -176,6 +176,7 @@ fn clean_inplace<'py>(
     isomeric=true,
     allowed_elements=None,
     neutralize=false,
+    verify=true,
     inplace=false,
     n_threads=-1,
 ))]
@@ -190,6 +191,7 @@ pub fn clean<'py>(
     isomeric: bool,
     allowed_elements: Option<&Bound<'py, PyAny>>,
     neutralize: bool,
+    verify: bool,
     inplace: bool,
     n_threads: i32,
 ) -> PyResult<Bound<'py, PyAny>> {
@@ -220,6 +222,7 @@ pub fn clean<'py>(
             no_stereo,
             isomeric,
             neutralize,
+            verify,
         },
         allowed,
         want_mol,

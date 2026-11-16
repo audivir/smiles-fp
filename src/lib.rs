@@ -33,6 +33,7 @@ mod ffi {
         no_stereo: bool,
         isomeric: bool,
         neutralize: bool,
+        verify: bool,
     }
 
     /// Container for a cleaned SMILES. An empty `smiles` marks an invalid input.

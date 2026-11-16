@@ -312,6 +312,7 @@ def clean(
     isomeric: bool = True,
     allowed_elements: Collection[int] | None = None,
     neutralize: bool = False,
+    verify: bool = True,
     inplace: Literal[False] = False,
     n_threads: int = -1,
 ) -> list[str | None]:
@@ -332,6 +333,8 @@ def clean(
         isomeric: Whether to keep isomeric information in the SMILES.
         allowed_elements: Atomic numbers. If set, molecules with other elements are invalid.
         neutralize: Whether to neutralize charges. Groups of neutral species, like nitro, stay.
+        verify: Whether to parse the written SMILES again as a check. Skipping it saves a third of
+            the time. Has no effect with `output="mol"` for SMILES, which are parsed anyway.
         inplace: Whether to clean molecules in place instead of copying them. Holds the GIL, so
             other Python threads cannot use the molecules, and the molecules must not be used by a
             GIL-released RDKit function in another thread. An invalid molecule stays unchanged.
@@ -359,6 +362,7 @@ def clean(
     isomeric: bool = True,
     allowed_elements: Collection[int] | None = None,
     neutralize: bool = False,
+    verify: bool = True,
     inplace: Literal[False] = False,
     n_threads: int = -1,
 ) -> list[Chem.Mol | None]: ...

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from itertools import product
-from typing import TypedDict
+from typing import Literal, TypedDict
 
 import pytest
 from conftest import read_smis
@@ -198,3 +198,13 @@ def test_inplace_argument_errors() -> None:
         clean(["CCO"], "mol", inplace=True)  # type: ignore[call-overload]
     with pytest.raises(ValueError, match="requires output"):
         clean([mol], "smiles", inplace=True)  # type: ignore[call-overload]
+
+
+@pytest.mark.parametrize("output", ["smiles", "mol"])
+def test_skipping_verification_keeps_results(output: Literal["smiles", "mol"]) -> None:
+    mols = [m for m in mols_from_smiles(corpus()) if m is not None]
+    for inputs in (corpus(), mols):
+        checked = clean(inputs, output, no_salts=True)
+        unchecked = clean(inputs, output, no_salts=True, verify=False)
+        as_text = [Chem.MolToSmiles(x) if isinstance(x, Chem.Mol) else x for x in unchecked]
+        assert as_text == [Chem.MolToSmiles(x) if isinstance(x, Chem.Mol) else x for x in checked]
