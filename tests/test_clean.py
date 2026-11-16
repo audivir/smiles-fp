@@ -47,6 +47,26 @@ class Flags(TypedDict):
     neutralize: bool
 
 
+def smiles_flags(flags: Flags) -> Flags:
+    """Returns the flags of the original pipeline, which leaves both to the SMILES writer."""
+    iso = flags["isomeric"]
+    return {
+        **flags,
+        "no_isotopes": iso and flags["no_isotopes"],
+        "no_stereo": iso and flags["no_stereo"],
+    }
+
+
+def mol_flags(flags: Flags) -> Flags:
+    """Returns the flags for molecules that are not written, where non-isomeric implies both."""
+    iso = flags["isomeric"]
+    return {
+        **flags,
+        "no_isotopes": flags["no_isotopes"] or not iso,
+        "no_stereo": flags["no_stereo"] or not iso,
+    }
+
+
 def clean_mol_reference(mol: Chem.Mol, allowed: set[int] | None, flags: Flags) -> Chem.Mol | None:
     """Mirrors the steps of the pipeline, treating an RDKit exception as an invalid input."""
     mol = Chem.RemoveAllHs(mol)
@@ -62,10 +82,10 @@ def clean_mol_reference(mol: Chem.Mol, allowed: set[int] | None, flags: Flags) -
     if flags["neutralize"]:
         mol = Uncharger().uncharge(mol)
     atoms = mol.GetAtoms()  # type: ignore[no-untyped-call]
-    if flags["isomeric"] and flags["no_isotopes"]:
+    if flags["no_isotopes"]:
         for atom in atoms:
             atom.SetIsotope(0)
-    if flags["isomeric"] and flags["no_stereo"]:
+    if flags["no_stereo"]:
         Chem.RemoveStereochemistry(mol)
     if allowed and any(atom.GetAtomicNum() not in allowed for atom in atoms):
         return None
@@ -86,7 +106,7 @@ def clean_reference(smiles: str, allowed: set[int] | None, flags: Flags) -> str 
     parsed: Chem.Mol | None = Chem.MolFromSmiles(smiles)
     if parsed is None or parsed.GetNumAtoms() == 0:
         return None
-    mol = clean_mol_reference(parsed, allowed, flags)
+    mol = clean_mol_reference(parsed, allowed, smiles_flags(flags))
     return None if mol is None else write_reference(mol, flags)
 
 
@@ -139,7 +159,7 @@ def test_mols_match_reference(values: tuple[bool, ...], allowed: set[int] | None
     flags: Flags = dict(zip(FLAGS, values, strict=True))  # type: ignore[assignment]
     mols = [m for m in mols_from_smiles(corpus()) if m is not None]
     before = [Chem.MolToSmiles(m) for m in mols]
-    cleaned = [clean_mol_reference(Chem.Mol(m), allowed, flags) for m in mols]
+    cleaned = [clean_mol_reference(Chem.Mol(m), allowed, mol_flags(flags)) for m in mols]
     expected_mols = [Chem.MolToSmiles(m) if m else None for m in cleaned]
     expected_smiles = [write_reference(m, flags) if m else None for m in cleaned]
     result = clean(mols, "mol", allowed_elements=allowed, **flags)
@@ -208,3 +228,14 @@ def test_skipping_verification_keeps_results(output: Literal["smiles", "mol"]) -
         unchecked = clean(inputs, output, no_salts=True, verify=False)
         as_text = [Chem.MolToSmiles(x) if isinstance(x, Chem.Mol) else x for x in unchecked]
         assert as_text == [Chem.MolToSmiles(x) if isinstance(x, Chem.Mol) else x for x in checked]
+
+
+@pytest.mark.parametrize("inplace", [False, True])
+def test_non_isomeric_molecules_lose_isotopes_and_stereo(inplace: bool) -> None:
+    mol = one_mol("[13CH3][C@H](F)Cl")
+    if inplace:
+        assert clean([mol], isomeric=False, inplace=True) == [True]
+        result = mol
+    else:
+        (result,) = (m for m in clean([mol], "mol", isomeric=False) if m is not None)
+    assert Chem.MolToSmiles(result) == "CC(F)Cl"

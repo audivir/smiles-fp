@@ -398,9 +398,9 @@ size_t make_cleaner(const CleanOpts& opts, rust::Slice<const uint32_t> allowed,
                     rust::Str salt_lines) {
   auto cleaner = std::make_unique<Cleaner>();
   cleaner->opts = opts;
-  // `MolToSmiles` drops isotopes and stereochemistry itself when not isomeric.
-  cleaner->opts.no_isotopes = opts.isomeric && opts.no_isotopes;
-  cleaner->opts.no_stereo = opts.isomeric && opts.no_stereo;
+  // a non-isomeric result has neither, which also holds for molecules that are not written.
+  cleaner->opts.no_isotopes = opts.no_isotopes || !opts.isomeric;
+  cleaner->opts.no_stereo = opts.no_stereo || !opts.isomeric;
   for (uint32_t z : allowed) {
     if (z < cleaner->allowed.size()) cleaner->allowed.set(z);
   }
