@@ -256,10 +256,13 @@ MolPtrs extract_mol_ptrs(size_t py_seq_ptr) {
 
 rust::String mol_to_smiles_raw(size_t mol_ptr, const SmilesOpts& opts) {
   const RDKit::ROMol* mol = reinterpret_cast<const RDKit::ROMol*>(mol_ptr);
-  return rust::String(RDKit::MolToSmiles(
+  const std::string smiles = RDKit::MolToSmiles(
       *mol, opts.isomeric_smiles, opts.kekule_smiles, opts.rooted_at_atom,
       opts.canonical, opts.all_bonds_explicit, opts.all_hs_explicit,
-      /*doRandom=*/false, opts.ignore_atom_map_numbers));
+      /*doRandom=*/false, opts.ignore_atom_map_numbers);
+  // the pointer and length constructor avoids `std::string` in the signature, which would not link
+  // with the old libstdc++ string ABI of some RDKit wheels.
+  return rust::String(smiles.data(), smiles.size());
 }
 
 size_t clone_mol_raw(size_t mol_ptr) {
