@@ -17,10 +17,10 @@ SMILES = list(conftest.get_cached_mols())[:300]
 
 def _signature(mol: Chem.Mol) -> tuple[list[int], list[tuple[int, int, float]]]:
     """Comparable description of an (also unsanitized) molecule."""
-    atoms = [a.GetAtomicNum() for a in mol.GetAtoms()]  # type: ignore[no-untyped-call]
+    atoms = [a.GetAtomicNum() for a in mol.GetAtoms()]  # type: ignore[no-untyped-call,unused-ignore]
     bonds = [
         (b.GetBeginAtomIdx(), b.GetEndAtomIdx(), b.GetBondTypeAsDouble())
-        for b in mol.GetBonds()  # type: ignore[no-untyped-call]
+        for b in mol.GetBonds()  # type: ignore[no-untyped-call,unused-ignore]
     ]
     return atoms, bonds
 
