@@ -2,7 +2,9 @@
 
 #include <DataStructs/ExplicitBitVect.h>
 #include <GraphMol/Fingerprints/FingerprintGenerator.h>
+#include <GraphMol/ChemTransforms/ChemTransforms.h>
 #include <GraphMol/Fingerprints/MorganGenerator.h>
+#include <GraphMol/MolOps.h>
 #include <GraphMol/ROMol.h>
 #include <GraphMol/RWMol.h>
 #include <GraphMol/SmilesParse/SmilesParse.h>
@@ -13,6 +15,8 @@
 #include <cstdio>
 #include <fstream>
 #include <limits>
+#include <memory>
+#include <sstream>
 #include <stdexcept>
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -302,5 +306,71 @@ int32_t smiles_to_fp_blocks(size_t generator, rust::Str smiles, rust::Slice<uint
     return 0;
   } catch (...) {
     return 1;
+  }
+}
+
+struct SaltStripper {
+  std::vector<std::unique_ptr<RDKit::RWMol>> salts;
+};
+
+size_t make_salt_stripper(rust::Str smarts_lines) {
+  auto stripper = std::make_unique<SaltStripper>();
+  std::istringstream in(std::string(smarts_lines.data(), smarts_lines.size()));
+  std::string line;
+  while (std::getline(in, line)) {
+    if (line.empty()) continue;
+    std::unique_ptr<RDKit::RWMol> query(RDKit::SmartsToMol(line));
+    if (!query) throw std::runtime_error("Invalid salt SMARTS: " + line);
+    stripper->salts.push_back(std::move(query));
+  }
+  return reinterpret_cast<size_t>(stripper.release());
+}
+
+void free_salt_stripper(size_t stripper) {
+  delete reinterpret_cast<SaltStripper*>(stripper);
+}
+
+// deletes fragments that match `salt` until the atom count stops shrinking.
+static void delete_salt(std::unique_ptr<RDKit::ROMol>& mol, const RDKit::ROMol& salt,
+                        bool keep_last) {
+  size_t n_atoms = mol->getNumAtoms();
+  if (!n_atoms) return;
+  std::unique_ptr<RDKit::ROMol> next(RDKit::deleteSubstructs(*mol, salt, true));
+  if (keep_last && next->getNumAtoms() == 0) return;
+  mol = std::move(next);
+  while (mol->getNumAtoms() && n_atoms > mol->getNumAtoms()) {
+    n_atoms = mol->getNumAtoms();
+    next.reset(RDKit::deleteSubstructs(*mol, salt, true));
+    if (keep_last && next->getNumAtoms() == 0) break;
+    mol = std::move(next);
+  }
+}
+
+size_t strip_salts_raw(size_t stripper, size_t mol_ptr, bool keep_last) {
+  try {
+    const auto* salts = reinterpret_cast<const SaltStripper*>(stripper);
+    const auto* in = reinterpret_cast<const RDKit::ROMol*>(mol_ptr);
+    std::vector<int> mapping;
+    auto single_fragment = [&](const RDKit::ROMol& m) {
+      mapping.clear();
+      return RDKit::MolOps::getMolFrags(m, mapping) <= 1;
+    };
+    auto mol = std::make_unique<RDKit::ROMol>(*in);
+    bool modified = false;
+    if (!(keep_last && single_fragment(*mol))) {
+      size_t n_atoms = mol->getNumAtoms();
+      for (const auto& salt : salts->salts) {
+        delete_salt(mol, *salt, keep_last);
+        if (n_atoms == mol->getNumAtoms()) continue;
+        n_atoms = mol->getNumAtoms();
+        modified = true;
+        if (keep_last && single_fragment(*mol)) break;
+      }
+    }
+    auto result = std::make_unique<RDKit::RWMol>(*mol);
+    if (modified && result->getNumAtoms() > 0) RDKit::MolOps::sanitizeMol(*result);
+    return reinterpret_cast<size_t>(static_cast<RDKit::ROMol*>(result.release()));
+  } catch (...) {
+    return 0;
   }
 }

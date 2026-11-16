@@ -49,3 +49,14 @@ int32_t smiles_to_fp_blocks(size_t generator, rust::Str smiles, rust::Slice<uint
 size_t clone_mol_raw(size_t mol_ptr);
 // Frees a molecule returned by `parse_smiles_raw` or `clone_mol_raw` that was not wrapped.
 void free_mol_raw(size_t mol_ptr);
+
+// Creates a salt stripper from SMARTS patterns, one per line, like `SaltRemover` in Python. Throws
+// if a pattern is invalid. A stripper is not shared between threads, as matching may update
+// caches of its query molecules. Returns it as an integer, which the caller frees with
+// `free_salt_stripper`.
+size_t make_salt_stripper(rust::Str smarts_lines);
+void free_salt_stripper(size_t stripper);
+// Copies a molecule and removes the salt fragments like `SaltRemover.StripMol`, without touching
+// the Python API, so it is thread-safe on distinct strippers. Returns an owning `ROMol*` as an
+// integer, or 0 if sanitizing the stripped molecule fails.
+size_t strip_salts_raw(size_t stripper, size_t mol_ptr, bool keep_last);

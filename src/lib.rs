@@ -17,6 +17,8 @@ use std::{
     path::PathBuf,
 };
 
+mod salt_remover;
+
 /// Thread-safe pointer wrapper
 #[derive(Copy, Clone)]
 struct SyncPtr<T>(*mut T);
@@ -128,6 +130,9 @@ mod ffi {
         fn free_mol_raw(mol_ptr: usize);
         fn make_morgan_generator(radius: u32, n_bits: u32) -> Result<usize>;
         fn free_morgan_generator(generator: usize);
+        fn make_salt_stripper(smarts_lines: &str) -> Result<usize>;
+        fn free_salt_stripper(stripper: usize);
+        fn strip_salts_raw(stripper: usize, mol_ptr: usize, keep_last: bool) -> usize;
         fn smiles_to_fp_blocks(generator: usize, smiles: &str, out: &mut [u64]) -> i32;
     }
 }
@@ -1216,6 +1221,7 @@ fn _smiles_fp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(fingerprints_to_blocks, m)?)?;
     m.add_function(wrap_pyfunction!(mols_from_smiles, m)?)?;
     m.add_function(wrap_pyfunction!(mols_to_smiles, m)?)?;
+    m.add_function(wrap_pyfunction!(salt_remover::strip_salts, m)?)?;
     m.add_function(wrap_pyfunction!(save_morgan_fps_from_smiles, m)?)?;
     m.add_function(wrap_pyfunction!(bulk_tanimoto_parallel, m)?)?;
     m.add_function(wrap_pyfunction!(bulk_tanimoto_parallel_topk, m)?)?;

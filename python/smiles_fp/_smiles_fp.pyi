@@ -278,3 +278,25 @@ def mols_to_smiles(
         ValueError: If a `rooted_at_atom` sequence does not have one item per molecule.
         RuntimeError: If RDKit cannot write a molecule (e.g. `rooted_at_atom` out of range).
     """
+
+def _strip_salts(
+    mols: Sequence[Chem.Mol],
+    dont_remove_everything: bool = False,
+    *,
+    n_threads: int = -1,
+) -> list[Chem.Mol | None]:
+    """Removes the default salts from copies of molecules like `SaltRemover().StripMol`.
+
+    Holds the GIL, so other Python threads cannot modify the molecules.
+
+    Args:
+        mols: A sequence of RDKit molecules, which stay unchanged.
+        dont_remove_everything: Whether to keep the last salt if all fragments would be removed.
+        n_threads: The number of threads to use. Defaults to -1 (auto-detect).
+
+    Returns:
+        A list with a stripped molecule per input, or None where sanitizing it failed.
+
+    Raises:
+        TypeError: If an item is not a molecule.
+    """
