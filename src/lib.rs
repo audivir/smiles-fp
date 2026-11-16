@@ -1,6 +1,6 @@
 use crate::ffi::FpBatch;
 use numpy::{
-    PyArray1, PyArray2,
+    PyArray1, PyArray2, PyArrayMethods, PyReadonlyArray2, PyUntypedArray, PyUntypedArrayMethods,
     ndarray::{Array1, Array2},
 };
 use pyo3::{
@@ -160,6 +160,170 @@ impl FpBatch {
 #[inline(always)]
 fn get_n_blocks(n_bits: usize) -> usize {
     n_bits.div_ceil(64)
+}
+
+/// Fingerprint blocks that are either owned or borrowed from a NumPy array.
+enum FpData<'py> {
+    Owned(Vec<u64>),
+    Borrowed(PyReadonlyArray2<'py, u64>),
+}
+
+/// Fingerprints of any accepted input as rows of 64-bit blocks.
+struct Fps<'py> {
+    n_fps: usize,
+    /// Bits per fingerprint, unknown for packed arrays whose last block may be padded.
+    n_bits: Option<usize>,
+    n_blocks: usize,
+    data: FpData<'py>,
+}
+
+impl Fps<'_> {
+    fn blocks(&self) -> &[u64] {
+        match &self.data {
+            FpData::Owned(v) => v,
+            FpData::Borrowed(a) => a.as_slice().expect("checked to be contiguous"),
+        }
+    }
+}
+
+/// Packs 64 bytes of 0 or 1 into one block, element `k` becoming bit `k`.
+///
+/// Returns the block and the OR of all input words, which has bits above 0 set if a byte is
+/// not 0 or 1.
+#[inline(always)]
+fn pack_block(bytes: &[u8; 64]) -> (u64, u64) {
+    let mut block = 0u64;
+    let mut any = 0u64;
+    for m in 0..8 {
+        let x = u64::from_le_bytes(bytes[m * 8..m * 8 + 8].try_into().unwrap());
+        any |= x;
+        // each byte of `x` is 0 or 1, so the multiplication gathers them into the top byte.
+        block |= (x.wrapping_mul(0x0102_0408_1020_4080) >> 56) << (8 * m);
+    }
+    (block, any)
+}
+
+/// Packs one fingerprint of 0/1 bytes into blocks and returns whether all values were 0 or 1.
+fn pack_row(row: &[u8], out: &mut [u64]) -> bool {
+    const NOT_BIT: u64 = 0xFEFE_FEFE_FEFE_FEFE;
+    let mut any = 0u64;
+    let (chunks, rest) = row.as_chunks::<64>();
+    for (block, chunk) in out.iter_mut().zip(chunks) {
+        let (b, a) = pack_block(chunk);
+        *block = b;
+        any |= a;
+    }
+    if !rest.is_empty() {
+        let mut buf = [0u8; 64];
+        buf[..rest.len()].copy_from_slice(rest);
+        let (b, a) = pack_block(&buf);
+        out[row.len() / 64] = b;
+        any |= a;
+    }
+    any & NOT_BIT == 0
+}
+
+/// Extracts fingerprints from RDKit bit vectors, a 2D uint8 array of bits, or a 2D uint64 array
+/// of packed blocks.
+fn extract_fps<'py>(
+    py: Python<'py>,
+    obj: &Bound<'py, PyAny>,
+    n_threads: i32,
+) -> PyResult<Fps<'py>> {
+    if let Ok(arr) = obj.cast::<PyArray2<u8>>() {
+        let arr = arr.readonly();
+        let (n_fps, n_bits) = (arr.shape()[0], arr.shape()[1]);
+        let n_blocks = get_n_blocks(n_bits);
+        if n_fps == 0 {
+            return Ok(Fps {
+                n_fps,
+                n_bits: Some(n_bits),
+                n_blocks,
+                data: FpData::Owned(vec![]),
+            });
+        }
+        if n_bits == 0 {
+            return Err(PyValueError::new_err(
+                "Fingerprints must have at least one bit",
+            ));
+        }
+        let mut data = vec![0u64; n_fps * n_blocks];
+        let pool = setup_local_pool(n_threads).map_err(PyRuntimeError::new_err)?;
+        // `as_slice` also succeeds for column-major arrays, whose rows are not contiguous.
+        let valid = match arr.as_slice() {
+            Ok(src) if arr.is_c_contiguous() => run_pool(py, &pool, || {
+                data.par_chunks_mut(n_blocks)
+                    .zip(src.par_chunks(n_bits))
+                    .map(|(out, row)| pack_row(row, out))
+                    .all(|ok| ok)
+            }),
+            _ => {
+                // strided rows are gathered one at a time, so no full copy of the array is made.
+                let view = arr.as_array();
+                run_pool(py, &pool, || {
+                    data.par_chunks_mut(n_blocks)
+                        .enumerate()
+                        .map_init(
+                            || vec![0u8; n_bits],
+                            |buf, (i, out)| {
+                                for (dst, &v) in buf.iter_mut().zip(view.row(i)) {
+                                    *dst = v;
+                                }
+                                pack_row(buf, out)
+                            },
+                        )
+                        .all(|ok| ok)
+                })
+            }
+        };
+        if !valid {
+            return Err(PyValueError::new_err(
+                "Fingerprint arrays must contain only 0 and 1",
+            ));
+        }
+        return Ok(Fps {
+            n_fps,
+            n_bits: Some(n_bits),
+            n_blocks,
+            data: FpData::Owned(data),
+        });
+    }
+    if let Ok(arr) = obj.cast::<PyArray2<u64>>() {
+        let arr = arr.readonly();
+        let (n_fps, n_blocks) = (arr.shape()[0], arr.shape()[1]);
+        let data = if arr.is_c_contiguous() {
+            FpData::Borrowed(arr)
+        } else {
+            FpData::Owned(arr.as_array().iter().copied().collect())
+        };
+        return Ok(Fps {
+            n_fps,
+            n_bits: None,
+            n_blocks,
+            data,
+        });
+    }
+    if obj.cast::<PyUntypedArray>().is_ok() {
+        return Err(PyTypeError::new_err(
+            "Fingerprint arrays must be 2D with dtype uint8 (bits) or uint64 (packed blocks)",
+        ));
+    }
+    let batch = FpBatch::from_py_seq(obj.cast::<PySequence>()?)?;
+    Ok(Fps {
+        n_fps: batch.n_fps as usize,
+        n_bits: Some(batch.n_bits as usize),
+        n_blocks: get_n_blocks(batch.n_bits as usize),
+        data: FpData::Owned(batch.data),
+    })
+}
+
+/// Raises if two fingerprint sets cannot be compared.
+fn check_same_bits(a: &Fps<'_>, b: &Fps<'_>) -> PyResult<()> {
+    let bits_differ = matches!((a.n_bits, b.n_bits), (Some(x), Some(y)) if x != y);
+    if bits_differ || a.n_blocks != b.n_blocks {
+        return Err(PyValueError::new_err("Fingerprint bit mismatch"));
+    }
+    Ok(())
 }
 
 /// Returns a vector with the number of on bits for each fingerprint.
@@ -483,7 +647,22 @@ fn save_fingerprints<'py>(fps: &Bound<'py, PySequence>, path: &Bound<'py, PyAny>
         .map_err(|e| ffi_error(py, e, true))
 }
 
+/// Copies the bits of RDKit fingerprints into a 2D array of little-endian 64-bit blocks.
 #[pyfunction]
+#[pyo3(name = "_fingerprints_to_blocks")]
+fn fingerprints_to_blocks<'py>(
+    py: Python<'py>,
+    py_fps: &Bound<'py, PySequence>,
+) -> PyResult<Bound<'py, PyArray2<u64>>> {
+    let batch = FpBatch::from_py_seq(py_fps)?;
+    let shape = (batch.n_fps as usize, get_n_blocks(batch.n_bits as usize));
+    let blocks = Array2::from_shape_vec(shape, batch.data)
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+    Ok(PyArray2::from_owned_array(py, blocks))
+}
+
+#[pyfunction]
+#[pyo3(name = "_load_fingerprints")]
 fn load_fingerprints<'py>(
     py: Python<'py>,
     path: &Bound<'py, PyAny>,
@@ -807,17 +986,17 @@ fn mols_from_smiles<'py>(
 #[pyo3(signature = (py_fps, py_fps2, n_threads=-1, agg=None))]
 fn bulk_tanimoto_parallel<'py>(
     py: Python<'py>,
-    py_fps: &Bound<'py, PySequence>,
-    py_fps2: &Bound<'py, PySequence>,
+    py_fps: &Bound<'py, PyAny>,
+    py_fps2: &Bound<'py, PyAny>,
     n_threads: i32,
     agg: Option<String>,
 ) -> PyResult<Bound<'py, PyAny>> {
     let agg = parse_agg(agg)?;
-    let fps1 = FpBatch::from_py_seq(py_fps)?;
-    let fps2 = FpBatch::from_py_seq(py_fps2)?;
+    let fps1 = extract_fps(py, py_fps, n_threads)?;
+    let fps2 = extract_fps(py, py_fps2, n_threads)?;
 
-    let n_fps1 = fps1.n_fps as usize;
-    let n_fps2 = fps2.n_fps as usize;
+    let n_fps1 = fps1.n_fps;
+    let n_fps2 = fps2.n_fps;
 
     if n_fps1 == 0 || n_fps2 == 0 {
         return match agg {
@@ -828,18 +1007,16 @@ fn bulk_tanimoto_parallel<'py>(
         };
     }
 
-    if fps1.n_bits != fps2.n_bits {
-        return Err(PyValueError::new_err("Fingerprint bit mismatch"));
-    }
+    check_same_bits(&fps1, &fps2)?;
 
     pooled_similarity(
         py,
         agg,
-        get_n_blocks(fps1.n_bits as usize),
+        fps1.n_blocks,
         n_fps1,
         n_fps2,
-        &fps1.data,
-        &fps2.data,
+        fps1.blocks(),
+        fps2.blocks(),
         n_threads,
         0,
     )
@@ -849,16 +1026,16 @@ fn bulk_tanimoto_parallel<'py>(
 #[pyo3(signature = (py_fps, py_fps2, k=10, n_threads=-1))]
 fn bulk_tanimoto_parallel_topk<'py>(
     py: Python<'py>,
-    py_fps: &Bound<'py, PySequence>,
-    py_fps2: &Bound<'py, PySequence>,
+    py_fps: &Bound<'py, PyAny>,
+    py_fps2: &Bound<'py, PyAny>,
     k: usize,
     n_threads: i32,
 ) -> PyResult<Bound<'py, PyAny>> {
-    let fps1 = FpBatch::from_py_seq(py_fps)?;
-    let fps2 = FpBatch::from_py_seq(py_fps2)?;
+    let fps1 = extract_fps(py, py_fps, n_threads)?;
+    let fps2 = extract_fps(py, py_fps2, n_threads)?;
 
-    let n_fps1 = fps1.n_fps as usize;
-    let n_fps2 = fps2.n_fps as usize;
+    let n_fps1 = fps1.n_fps;
+    let n_fps2 = fps2.n_fps;
 
     if n_fps1 == 0 || n_fps2 == 0 {
         let py_idx = PyArray2::from_owned_array(py, Array2::<u32>::zeros((n_fps1, 0)));
@@ -866,18 +1043,16 @@ fn bulk_tanimoto_parallel_topk<'py>(
         return Ok(PyTuple::new(py, &[py_idx.into_any(), py_scores.into_any()])?.into_any());
     }
 
-    if fps1.n_bits != fps2.n_bits {
-        return Err(PyValueError::new_err("Fingerprint bit mismatch"));
-    }
+    check_same_bits(&fps1, &fps2)?;
 
     pooled_similarity(
         py,
         Agg::TopK(k),
-        get_n_blocks(fps1.n_bits as usize),
-        fps1.n_fps as usize,
-        fps2.n_fps as usize,
-        &fps1.data,
-        &fps2.data,
+        fps1.n_blocks,
+        n_fps1,
+        n_fps2,
+        fps1.blocks(),
+        fps2.blocks(),
         n_threads,
         0,
     )
@@ -991,13 +1166,13 @@ fn bulk_tanimoto_mmap_topk<'py>(
 #[pyo3(signature = (py_fps, n_threads=-1, agg=None))]
 fn internal_tanimoto_parallel<'py>(
     py: Python<'py>,
-    py_fps: &Bound<'py, PySequence>,
+    py_fps: &Bound<'py, PyAny>,
     n_threads: i32,
     agg: Option<String>,
 ) -> PyResult<Bound<'py, PyAny>> {
     let agg = parse_agg(agg)?;
-    let fps = FpBatch::from_py_seq(py_fps)?;
-    let n_fps = fps.n_fps as usize;
+    let fps = extract_fps(py, py_fps, n_threads)?;
+    let n_fps = fps.n_fps;
 
     if n_fps == 0 {
         return match agg {
@@ -1006,14 +1181,7 @@ fn internal_tanimoto_parallel<'py>(
         };
     }
 
-    pooled_internal_similarity(
-        py,
-        agg,
-        get_n_blocks(fps.n_bits as usize),
-        n_fps,
-        &fps.data,
-        n_threads,
-    )
+    pooled_internal_similarity(py, agg, fps.n_blocks, n_fps, fps.blocks(), n_threads)
 }
 
 #[pyfunction]
@@ -1045,6 +1213,7 @@ fn internal_tanimoto_mmap<'py>(
 fn _smiles_fp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(save_fingerprints, m)?)?;
     m.add_function(wrap_pyfunction!(load_fingerprints, m)?)?;
+    m.add_function(wrap_pyfunction!(fingerprints_to_blocks, m)?)?;
     m.add_function(wrap_pyfunction!(mols_from_smiles, m)?)?;
     m.add_function(wrap_pyfunction!(mols_to_smiles, m)?)?;
     m.add_function(wrap_pyfunction!(save_morgan_fps_from_smiles, m)?)?;

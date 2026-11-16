@@ -11,6 +11,8 @@ import pytest
 from smiles_fp import get_mols, get_morgan_fps
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from numpy.typing import NDArray
     from rdkit import Chem
     from rdkit.DataStructs import ExplicitBitVect
@@ -32,6 +34,20 @@ if max(*TEST_SIZES, *BENCHMARK_SIZES) > N_SMILES:  # pragma: no cover
 
 def zero_array(dims: int, value: int = 0) -> NDArray[np.float64]:
     return np.zeros(shape=tuple(value for _ in range(dims)), dtype=np.float64)
+
+
+def fps_to_bits(fps: Sequence[ExplicitBitVect]) -> NDArray[np.uint8]:
+    """Converts fingerprints to a 2D uint8 array with one bit per column."""
+    if not fps:
+        return np.zeros((0, 1), dtype=np.uint8)
+    rows = [np.frombuffer(fp.ToBitString().encode(), dtype=np.uint8) - ord("0") for fp in fps]  # type: ignore[no-untyped-call]
+    return np.array(rows, dtype=np.uint8)
+
+
+def bits_to_packed(bits: NDArray[np.uint8]) -> NDArray[np.uint64]:
+    """Packs a 2D uint8 array of bits into little-endian 64-bit blocks per row."""
+    padded = np.pad(bits, ((0, 0), (0, -bits.shape[1] % 64)))
+    return np.packbits(padded, axis=1, bitorder="little").view("<u8")
 
 
 @cache

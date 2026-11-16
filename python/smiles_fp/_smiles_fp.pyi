@@ -6,13 +6,23 @@ in Rust.
 """
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import numpy as np
 from _typeshed import StrPath
 from numpy.typing import NDArray
 from rdkit import Chem
 from rdkit.DataStructs.cDataStructs import ExplicitBitVect
+
+Fingerprints: TypeAlias = Sequence[ExplicitBitVect] | NDArray[np.uint8] | NDArray[np.uint64]
+"""RDKit fingerprints or a NDArray of fingerprints.
+
+An NDArray is either 2D with dtype uint8 and one bit per column (as accepted by
+`save_fingerprints`), or 2D with dtype uint64 and packed 64-bit blocks. The packed bits must be
+in little bit order, like in the binary file: `np.packbits(bits, bitorder="little")` viewed as
+`"<u8"`. Mixing bit orders gives wrong results without an error. A packed NDArray is read in
+place while other Python threads run, so it must not be modified during the call.
+"""
 
 def _save_fingerprints(
     py_fps: Sequence[ExplicitBitVect],
@@ -27,7 +37,19 @@ def _save_fingerprints(
         filename: The path to the output file.
     """
 
-def load_fingerprints(
+def _fingerprints_to_blocks(
+    py_fps: Sequence[ExplicitBitVect],
+) -> NDArray[np.uint64]:
+    """Copies the bits of a sequence of fingerprints into packed 64-bit blocks.
+
+    Args:
+        py_fps: A sequence of RDKit fingerprints.
+
+    Returns:
+        A 2D uint64 NDArray with the little-endian blocks of each fingerprint per row.
+    """
+
+def _load_fingerprints(
     filename: StrPath,
 ) -> list[ExplicitBitVect]:
     """Loads a sequence of fingerprints from a binary file created with `save_fingerprints`.
@@ -40,41 +62,49 @@ def load_fingerprints(
     """
 
 def bulk_tanimoto_parallel(
-    py_fps: Sequence[ExplicitBitVect],
-    py_fps2: Sequence[ExplicitBitVect],
+    py_fps: Fingerprints,
+    py_fps2: Fingerprints,
     n_threads: int = -1,
     agg: Literal["mean", "max", "min", "full"] | None = None,
 ) -> NDArray[np.float64]:
     """Calculates Tanimoto similarities in parallel from RDKit fingerprints.
 
     Args:
-        py_fps: The first sequence of RDKit fingerprints.
-        py_fps2: The second sequence of RDKit fingerprints.
+        py_fps: The first sequence of RDKit fingerprints or NDArray.
+        py_fps2: The second sequence of RDKit fingerprints or NDArray.
         n_threads: The number of threads to use. Defaults to -1 (auto-detect).
         agg: Aggregation method. Defaults to 'full'.
 
     Returns:
         A 2D NumPy array with the similarity matrix if agg is None/'full' or
         1D NumPy array of aggregated similarity scores.
+
+    Raises:
+        TypeError: If an array is not 2D with dtype uint8 or uint64.
+        ValueError: If the fingerprint lengths differ or a uint8 array has values other than 0 or 1.
     """
 
 def bulk_tanimoto_parallel_topk(
-    py_fps: Sequence[ExplicitBitVect],
-    py_fps2: Sequence[ExplicitBitVect],
+    py_fps: Fingerprints,
+    py_fps2: Fingerprints,
     k: int = 10,
     n_threads: int = -1,
 ) -> tuple[NDArray[np.uint32], NDArray[np.float64]]:
     """Finds the top-K highest similarity scores for each query in memory.
 
     Args:
-        py_fps: Sequence of fingerprints for the query.
-        py_fps2: Sequence of fingerprints for the database to query from.
+        py_fps: Sequence of fingerprints or NDArray for the query.
+        py_fps2: Sequence of fingerprints or NDArray for the database to query from.
         k: Number of most-similar molecules to query for.
         n_threads: The number of threads to use. Defaults to -1 (auto-detect).
 
     Returns:
         A tuple with a 2D NumPy array containing the indices of the similarities and
         a 2D NumPy array containing the similarity scores.
+
+    Raises:
+        TypeError: If an array is not 2D with dtype uint8 or uint64.
+        ValueError: If the fingerprint lengths differ or a uint8 array has values other than 0 or 1.
     """
 
 def bulk_tanimoto_mmap(
@@ -124,14 +154,14 @@ def bulk_tanimoto_mmap_topk(
     """
 
 def internal_tanimoto_parallel(
-    py_fps: Sequence[ExplicitBitVect],
+    py_fps: Fingerprints,
     n_threads: int = -1,
     agg: Literal["mean", "max", "min", "full"] | None = None,
 ) -> NDArray[np.float64]:
     """Calculates internal (pairwise) similarities for a dataset in parallel.
 
     Args:
-        py_fps: The sequence of RDKit fingerprints.
+        py_fps: The sequence of RDKit fingerprints or NDArray.
         n_threads: The number of threads to use. Defaults to -1 (auto-detect).
         agg: Aggregation method. Defaults to 'full'.
 
@@ -140,6 +170,10 @@ def internal_tanimoto_parallel(
         (size: N * (N-1) / 2). Can be converted to a full symmetric 2D matrix
         using scipy.spatial.distance.squareform.
         Otherwise, returns a 1D array of the aggregated similarity scores.
+
+    Raises:
+        TypeError: If an array is not 2D with dtype uint8 or uint64.
+        ValueError: If a uint8 array has values other than 0 or 1.
     """
 
 def internal_tanimoto_mmap(
