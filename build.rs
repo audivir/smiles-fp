@@ -70,7 +70,7 @@ fn main() {
         .include(&boost_include_dir) // Boost headers (boost-headers PyPI package)
         .include(&rdkit_include_dir) // RDKit headers (rdkit-headers PyPI package)
         .include(&python_include_dir) // Python C headers
-        .flag_if_supported("-std=c++17")
+        .flag_if_supported("-std=c++20")
         .flag_if_supported("-O3")
         .flag_if_supported("-Wno-unused-parameter")
         .flag_if_supported("-Wno-missing-field-initializers")

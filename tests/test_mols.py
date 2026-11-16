@@ -136,7 +136,7 @@ def test_mols_to_smiles_has_no_do_random() -> None:
 
 
 def test_mols_to_smiles_rooted_at_atom_out_of_range_raises() -> None:
-    with pytest.raises(RuntimeError, match="rootedAtAtom must be less than the number of atoms"):
+    with pytest.raises(RuntimeError, match="must be less than the number of atoms"):
         smiles_fp.mols_to_smiles([Chem.MolFromSmiles("CCO")], rooted_at_atom=99)
 
 

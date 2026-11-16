@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-# initialize dynamic libraries
+# initialize dynamic libraries: RDKit libraries have no RUNPATH on Linux, so the dependencies of
+# the linked libraries must already be loaded by the RDKit modules.
 import rdkit  # noqa: F401
+from rdkit import Chem  # noqa: F401
+from rdkit.Chem import rdFingerprintGenerator  # noqa: F401
 
 from smiles_fp._smiles_fp import (
     bulk_tanimoto_mmap,
