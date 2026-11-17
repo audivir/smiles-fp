@@ -1,7 +1,7 @@
 [project]
 name = "smiles-fp"
 # build_wheel.py overrides it
-version = "0.3.2"
+version = "0.3.3"
 description = "Rust-accelerated Tanimoto similarity search over RDKit Morgan fingerprints."
 readme = "README.md"
 requires-python = ">=3.10,<3.15"
