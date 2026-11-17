@@ -100,6 +100,7 @@ repos:
         language: system
         types: [rust]
         require_serial: true
+        pass_filenames: false
       - id: docs
         name: generate DOCS.md
         entry: python scripts/gen_docs.py
