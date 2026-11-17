@@ -1,4 +1,4 @@
-use crate::{ffi, ffi_error, mols::OwnedMols, pool::setup_local_pool};
+use crate::{ffi, ffi_error, handle::OwnedMol, pool::setup_local_pool};
 use pyo3::{
     exceptions::PyRuntimeError,
     prelude::*,
@@ -33,9 +33,9 @@ impl SaltStripper {
             .map_err(|e| e.what().to_string())
     }
 
-    /// Returns a stripped copy of the molecule, or 0 if sanitizing it fails.
-    fn strip(&self, mol: usize, keep_last: bool) -> usize {
-        ffi::strip_salts_raw(self.0, mol, keep_last)
+    /// Returns a stripped copy of the molecule, or `None` if sanitizing it fails.
+    fn strip(&self, mol: usize, keep_last: bool) -> Option<OwnedMol> {
+        OwnedMol::from_raw(ffi::strip_salts_raw(self.0, mol, keep_last))
     }
 }
 
@@ -77,7 +77,7 @@ pub fn strip_salts<'py>(
             })
         })
         .collect();
-    let mut stripped = OwnedMols(pool.install(|| {
+    let mut stripped: Vec<Option<OwnedMol>> = pool.install(|| {
         distinct
             .par_iter()
             .map_init(
@@ -85,24 +85,34 @@ pub fn strip_salts<'py>(
                 |stripper, &p| stripper.strip(p, dont_remove_everything),
             )
             .collect()
-    }));
+    });
     drop(keepalive);
 
-    let mut out = OwnedMols(Vec::with_capacity(slots.len()));
+    let mut out: Vec<Option<OwnedMol>> = Vec::with_capacity(slots.len());
     let mut first_pos: Vec<Option<usize>> = vec![None; distinct.len()];
     for (i, &s) in slots.iter().enumerate() {
-        out.0.push(match first_pos[s] {
+        let item = match first_pos[s] {
             None => {
                 first_pos[s] = Some(i);
-                std::mem::take(&mut stripped.0[s])
+                stripped[s].take()
             }
-            Some(_) if out.0[first_pos[s].unwrap()] == 0 => 0,
-            Some(j) => ffi::clone_mol_raw(out.0[j])
-                .map_err(|e| PyRuntimeError::new_err(e.what().to_string()))?,
-        });
+            Some(j) => match &out[j] {
+                None => None,
+                Some(first) => {
+                    let copy = ffi::clone_mol_raw(first.as_raw())
+                        .map_err(|e| PyRuntimeError::new_err(e.what().to_string()))?;
+                    OwnedMol::from_raw(copy)
+                }
+            },
+        };
+        out.push(item);
     }
     // `wrap_mols` takes ownership of every pointer, also when it fails.
-    let wrapped = ffi::wrap_mols(&std::mem::take(&mut out.0));
+    let ptrs: Vec<usize> = out
+        .into_iter()
+        .map(|m| m.map_or(0, OwnedMol::into_raw))
+        .collect();
+    let wrapped = ffi::wrap_mols(&ptrs);
     if wrapped == 0 {
         return Err(PyErr::take(py)
             .unwrap_or_else(|| PyRuntimeError::new_err("Failed to wrap molecules in C++")));

@@ -1,5 +1,6 @@
 use crate::{
     ffi, ffi_error,
+    handle::OwnedMol,
     pool::{run_pool, setup_local_pool},
 };
 use pyo3::{
@@ -210,12 +211,17 @@ pub(crate) fn mols_from_smiles<'py>(
     n_threads: i32,
 ) -> PyResult<Bound<'py, PyAny>> {
     let pool = setup_local_pool(n_threads).map_err(PyRuntimeError::new_err)?;
-    let ptrs: Vec<usize> = run_pool(py, &pool, || {
+    let mols: Vec<Option<OwnedMol>> = run_pool(py, &pool, || {
         smiles
             .par_iter()
-            .map(|s| ffi::parse_smiles_raw(s, sanitize))
+            .map(|s| OwnedMol::from_raw(ffi::parse_smiles_raw(s, sanitize)))
             .collect()
     });
+    // `wrap_mols` takes ownership of every pointer, also when it fails.
+    let ptrs: Vec<usize> = mols
+        .into_iter()
+        .map(|m| m.map_or(0, OwnedMol::into_raw))
+        .collect();
     let ptr_val = ffi::wrap_mols(&ptrs);
     if ptr_val == 0 {
         return Err(PyErr::take(py)
