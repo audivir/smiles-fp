@@ -46,6 +46,8 @@ save_fingerprints(db_fps, "db.fp")
 results = similarity_search(query_ids, "query.fp", db_ids, "db.fp", k=5)
 ```
 
+All functions are described in [DOCS.md](DOCS.md).
+
 ## License
 
 MIT, see `LICENSE`.
