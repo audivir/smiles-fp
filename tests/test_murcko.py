@@ -117,14 +117,19 @@ OPTION_CASES = (
 )
 
 
-def option_reference(smiles: str, *, generic: bool, include_chirality: bool) -> str | None:
-    """Mirrors `MakeScaffoldGeneric` and `MurckoScaffoldSmiles` of RDKit."""
+def option_reference(  # pragma: no cover
+    smiles: str, *, generic: bool, include_chirality: bool
+) -> str | None:
+    """Mirrors `MakeScaffoldGeneric` and `MurckoScaffoldSmiles` of RDKit.
+
+    Not called where `MurckoDecompose` raises, so its lines are not covered there.
+    """
     mol: Chem.Mol = Chem.MolFromSmiles(smiles)
     try:
         scaffold = MurckoScaffold.GetScaffoldForMol(mol)  # type: ignore[no-untyped-call,unused-ignore]
         if generic:
             scaffold = MurckoScaffold.MakeScaffoldGeneric(scaffold)  # type: ignore[no-untyped-call,unused-ignore]
-    except RuntimeError:  # pragma: no cover
+    except RuntimeError:
         return None
     return Chem.MolToSmiles(scaffold, isomericSmiles=include_chirality)  # type: ignore[no-any-return,unused-ignore]
 
