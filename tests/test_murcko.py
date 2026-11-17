@@ -26,57 +26,73 @@ EDGE_CASES = (
 )
 
 
+def smiles_of(mol: Chem.Mol | None) -> str | None:
+    return None if mol is None else Chem.MolToSmiles(mol)  # type: ignore[no-any-return,unused-ignore]
+
+
+def scaffold_reference(mol: Chem.Mol) -> str | None:
+    """Returns the SMILES of the scaffold, or None where RDKit raises like `murcko_scaffolds`."""
+    scaffold: Chem.Mol | None
+    try:
+        scaffold = MurckoScaffold.GetScaffoldForMol(mol)  # type: ignore[no-untyped-call,unused-ignore]
+    except RuntimeError:  # pragma: no cover
+        scaffold = None
+    return smiles_of(scaffold)
+
+
+MURCKO_WORKS = scaffold_reference(Chem.MolFromSmiles("c1ccccc1")) is not None
+"""Whether RDKit computes scaffolds, which `MurckoDecompose` of 2026.9.2 does not on macOS."""
+
+
+def expect(scaffold: str) -> str | None:
+    """Returns the expected scaffold, which is None where RDKit cannot compute any."""
+    return scaffold if MURCKO_WORKS else None
+
+
 def corpus() -> list[str]:
     return [*EDGE_CASES, *(s.split()[0] for s in read_smis()[:300])]
 
 
-def scaffold_reference(mol: Chem.Mol) -> Chem.Mol:
-    return MurckoScaffold.GetScaffoldForMol(mol)  # type: ignore[no-untyped-call,no-any-return,unused-ignore]
-
-
 def smiles_reference(smiles: str) -> str | None:
-    if not smiles:
-        return None
-    mol: Chem.Mol | None = Chem.MolFromSmiles(smiles)
-    return None if mol is None else Chem.MolToSmiles(scaffold_reference(mol))
+    mol: Chem.Mol | None = Chem.MolFromSmiles(smiles) if smiles else None
+    return None if mol is None else scaffold_reference(mol)
 
 
 @pytest.mark.parametrize("n_threads", [1, 4])
 def test_smiles_match_reference(n_threads: int) -> None:
     smis = corpus()
-    assert murcko_scaffolds(smis, n_threads=n_threads) == [smiles_reference(s) for s in smis]
-    mols = murcko_scaffolds(smis, "mol", n_threads=n_threads)
     expected = [smiles_reference(s) for s in smis]
-    assert [Chem.MolToSmiles(m) if m else None for m in mols] == expected
+    assert murcko_scaffolds(smis, n_threads=n_threads) == expected
+    mols = murcko_scaffolds(smis, "mol", n_threads=n_threads)
+    assert [smiles_of(m) for m in mols] == expected
 
 
 def test_molecules_match_reference_and_stay_unchanged() -> None:
     mols = [m for m in mols_from_smiles(corpus()) if m is not None]
     before = [Chem.MolToSmiles(m) for m in mols]
-    expected = [Chem.MolToSmiles(scaffold_reference(Chem.Mol(m))) for m in mols]
+    expected = [scaffold_reference(Chem.Mol(m)) for m in mols]
     assert murcko_scaffolds(mols) == expected
-    scaffolds = murcko_scaffolds(mols, "mol")
-    assert [Chem.MolToSmiles(m) for m in scaffolds if m] == expected
+    assert [smiles_of(m) for m in murcko_scaffolds(mols, "mol")] == expected
     assert [Chem.MolToSmiles(m) for m in mols] == before
 
 
 def test_acyclic_is_empty_but_not_invalid() -> None:
-    assert murcko_scaffolds(["CCO", "c1ccccc1C"]) == ["", "c1ccccc1"]
+    assert murcko_scaffolds(["CCO", "c1ccccc1C"]) == [expect(""), expect("c1ccccc1")]
     (empty,) = murcko_scaffolds(["CCO"], "mol")
-    assert empty is not None
-    assert empty.GetNumAtoms() == 0
+    assert (empty is not None) == MURCKO_WORKS
+    assert empty is None or empty.GetNumAtoms() == 0
 
 
 def test_none_and_empty_are_invalid() -> None:
-    assert murcko_scaffolds([None, "", "c1ccccc1"]) == [None, None, "c1ccccc1"]
+    assert murcko_scaffolds([None, "", "c1ccccc1"]) == [None, None, expect("c1ccccc1")]
 
 
 def test_repeated_molecule_gets_own_scaffolds() -> None:
     mol = mols_from_smiles(["c1ccccc1C"])[0]
     assert mol is not None
     first, second = murcko_scaffolds([mol, mol], "mol")
-    assert first is not second
-    assert Chem.MolToSmiles(first) == Chem.MolToSmiles(second) == "c1ccccc1"
+    assert (first is not second) == MURCKO_WORKS
+    assert [smiles_of(first), smiles_of(second)] == [expect("c1ccccc1")] * 2
 
 
 def test_empty_input_and_errors() -> None:

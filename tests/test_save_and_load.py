@@ -166,7 +166,7 @@ def test_array_roundtrip_matches_bit_vectors(tmp_path: Path, n_bits: int) -> Non
 
 def test_array_and_bit_vector_files_are_identical(tmp_path: Path) -> None:
     fps = [_fp(smi, 2048) for smi in conftest.read_smis()[:50]]
-    bit_strings = [fp.ToBitString() for fp in fps]  # type: ignore[no-untyped-call]
+    bit_strings = [fp.ToBitString() for fp in fps]  # type: ignore[no-untyped-call,unused-ignore]
     bits = np.array([list(bit_string) for bit_string in bit_strings], dtype=np.uint8)
     smiles_fp.save_fingerprints(fps, tmp_path / "fps.fp")
     smiles_fp.save_fingerprints(bits, tmp_path / "array.fp")

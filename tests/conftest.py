@@ -40,7 +40,7 @@ def fps_to_bits(fps: Sequence[ExplicitBitVect]) -> NDArray[np.uint8]:
     """Converts fingerprints to a 2D uint8 array with one bit per column."""
     if not fps:
         return np.zeros((0, 1), dtype=np.uint8)
-    rows = [np.frombuffer(fp.ToBitString().encode(), dtype=np.uint8) - ord("0") for fp in fps]  # type: ignore[no-untyped-call]
+    rows = [np.frombuffer(fp.ToBitString().encode(), dtype=np.uint8) - ord("0") for fp in fps]  # type: ignore[no-untyped-call,unused-ignore]
     return np.array(rows, dtype=np.uint8)
 
 
