@@ -7,6 +7,7 @@
 #include <GraphMol/MolOps.h>
 #include <GraphMol/MolStandardize/Charge.h>
 #include <GraphMol/MolStandardize/Fragment.h>
+#include <GraphMol/MolStandardize/Tautomer.h>
 #include <GraphMol/ROMol.h>
 #include <GraphMol/RWMol.h>
 #include <GraphMol/SmilesParse/SmilesParse.h>
@@ -524,4 +525,30 @@ size_t murcko_raw(size_t mol_ptr) {
   } catch (...) {
     return 0;
   }
+}
+
+size_t make_tautomerizer(uint32_t max_tautomers, uint32_t max_transforms) {
+  auto* enumerator = new RDKit::MolStandardize::TautomerEnumerator();
+  enumerator->setMaxTautomers(max_tautomers);
+  enumerator->setMaxTransforms(max_transforms);
+  return reinterpret_cast<size_t>(enumerator);
+}
+
+void free_tautomerizer(size_t tautomerizer) {
+  delete reinterpret_cast<RDKit::MolStandardize::TautomerEnumerator*>(tautomerizer);
+}
+
+size_t tautomer_raw(size_t tautomerizer, size_t mol_ptr) {
+  try {
+    const auto* enumerator = reinterpret_cast<RDKit::MolStandardize::TautomerEnumerator*>(tautomerizer);
+    const auto* mol = reinterpret_cast<const RDKit::ROMol*>(mol_ptr);
+    std::unique_ptr<RDKit::ROMol> tautomer(enumerator->canonicalize(*mol));
+    return reinterpret_cast<size_t>(tautomer.release());
+  } catch (...) {
+    return 0;
+  }
+}
+
+size_t mol_num_atoms_raw(size_t mol_ptr) {
+  return reinterpret_cast<const RDKit::ROMol*>(mol_ptr)->getNumAtoms();
 }

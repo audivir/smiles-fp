@@ -418,3 +418,42 @@ def murcko_scaffolds(
     *,
     n_threads: int = -1,
 ) -> list[Chem.Mol | None]: ...
+@overload
+def canonical_tautomers(
+    inputs: Sequence[str | None] | Sequence[Chem.Mol],
+    output: Literal["smiles"] = "smiles",
+    *,
+    max_tautomers: int = 10_000,
+    max_transforms: int = 10_000,
+    n_threads: int = -1,
+) -> list[str | None]:
+    """Canonicalizes tautomers multi-threaded like `TautomerEnumerator.Canonicalize`.
+
+    Releases the GIL and creates no Python objects until the end. Each thread has its own
+    enumerator. Molecules are copied first and stay unchanged.
+
+    Args:
+        inputs: SMILES strings, where None and empty strings are invalid, or molecules.
+        output: Whether to return canonical SMILES or tautomer molecules.
+        max_tautomers: The maximum number of tautomers to enumerate per molecule.
+        max_transforms: The maximum number of transformations to apply per molecule.
+        n_threads: The number of threads to use. Defaults to -1 (auto-detect).
+
+    Returns:
+        A list with one tautomer per input, or None where it is invalid, RDKit fails, or the
+        SMILES of the tautomer does not parse again.
+
+    Raises:
+        TypeError: If the items are neither all SMILES nor all molecules.
+        ValueError: If `output` is unknown.
+    """
+
+@overload
+def canonical_tautomers(
+    inputs: Sequence[str | None] | Sequence[Chem.Mol],
+    output: Literal["mol"],
+    *,
+    max_tautomers: int = 10_000,
+    max_transforms: int = 10_000,
+    n_threads: int = -1,
+) -> list[Chem.Mol | None]: ...

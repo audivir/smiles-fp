@@ -91,3 +91,15 @@ bool clean_mol_inplace_raw(size_t cleaner, size_t mol_ptr);
 // without rings. Returns an owning `ROMol*` as an integer, or 0 if RDKit throws. The caller passes
 // it to `wrap_mols` or `free_mol_raw`.
 size_t murcko_raw(size_t mol_ptr);
+
+// Creates a tautomer enumerator with the given limits, which one thread at a time may use. The
+// caller frees it with `free_tautomerizer`.
+size_t make_tautomerizer(uint32_t max_tautomers, uint32_t max_transforms);
+void free_tautomerizer(size_t tautomerizer);
+
+// Returns the canonical tautomer of a molecule as an owning `ROMol*` integer, or 0 if RDKit throws.
+// The caller passes it to `wrap_mols` or `free_mol_raw`.
+size_t tautomer_raw(size_t tautomerizer, size_t mol_ptr);
+
+// Returns the number of atoms of a molecule.
+size_t mol_num_atoms_raw(size_t mol_ptr);
