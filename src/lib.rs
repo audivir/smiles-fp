@@ -6,6 +6,7 @@ use pyo3::{
 
 mod clean;
 mod fps;
+mod handle;
 mod mols;
 mod murcko;
 mod pool;

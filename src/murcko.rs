@@ -1,4 +1,4 @@
-use crate::{ffi, transform::transform};
+use crate::{ffi, handle::OwnedMol, transform::transform};
 use pyo3::{
     prelude::*,
     types::{PyAny, PySequence},
@@ -27,6 +27,6 @@ pub fn murcko_scaffolds<'py>(
         n_threads,
         false,
         || (),
-        |_, mol| ffi::murcko_raw(mol, generic, include_chirality),
+        |_, mol| OwnedMol::from_raw(ffi::murcko_raw(mol.as_raw(), generic, include_chirality)),
     )
 }
