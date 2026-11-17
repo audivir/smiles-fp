@@ -31,8 +31,8 @@ def windowed_bulk_tanimoto(
         query: Path to the query binary fingerprint file.
         db: Path to the database binary fingerprint file.
         window_size: Size of the window
-        n_threads: The number of threads to use. Defaults to -1 (auto-detect).
-        agg: Aggregation method, "mean" is not supported. Defaults to 'full'.
+        n_threads: The number of threads to use, where -1 detects the count automatically.
+        agg: Aggregation method, where "mean" is not supported.
 
     Returns:
         A generator with array window (shape depending on aggregation)
@@ -73,7 +73,7 @@ def similarity_search(  # noqa: PLR0913,PLR0917
         db_ids: Any identifier for each comparison fingerprint.
         db: Path to the database binary fingerprint file.
         k: Number of most-similar molecules to query for.
-        n_threads: The number of threads to use. Defaults to -1 (auto-detect).
+        n_threads: The number of threads to use, where -1 detects the count automatically.
 
     Returns:
         A dictionary of query identifiers to a list of

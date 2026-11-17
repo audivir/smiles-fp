@@ -114,7 +114,7 @@ Enumerated enumerate_raw(size_t tautomerizer, size_t mol_ptr);
 int32_t score_raw(size_t mol_ptr);
 
 // Returns the best tautomer of a group like `PickCanonical` as an owning `ROMol*` integer, or 0 for
-// an empty group or if RDKit throws. The group's molecules stay owned by the caller.
+// an empty group or if RDKit throws. The caller keeps ownership of the molecules of the group.
 size_t pick_canonical_raw(size_t tautomerizer, rust::Slice<const size_t> ptrs);
 
 // Returns the number of atoms of a molecule.

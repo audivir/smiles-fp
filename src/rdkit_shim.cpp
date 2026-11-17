@@ -566,7 +566,9 @@ size_t make_tautomerizer(const TautomerOpts& opts) {
   return reinterpret_cast<size_t>(enumerator);
 }
 
-void free_tautomerizer(size_t tautomerizer) { delete reinterpret_cast<Tautomerizer*>(tautomerizer); }
+void free_tautomerizer(size_t tautomerizer) {
+  delete reinterpret_cast<Tautomerizer*>(tautomerizer);
+}
 
 size_t tautomer_raw(size_t tautomerizer, size_t mol_ptr) {
   try {

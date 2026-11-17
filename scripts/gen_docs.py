@@ -157,7 +157,8 @@ def render_function(name: str, nodes: list[ast.FunctionDef]) -> str:
     """
     overloads = [n for n in nodes if "overload" in decorators(n)]
     shown = overloads or nodes
-    doc = next((d for n in nodes if (d := ast.get_docstring(n))), "")
+    docs = [ast.get_docstring(n) for n in nodes]
+    doc = next((d for d in docs if d), "")
     text, sections = split_sections(doc)
     out = [f"### `{name}`", "", "```python", "\n\n".join(signature(n) for n in shown), "```", ""]
     if message := deprecation(nodes):

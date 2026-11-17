@@ -192,13 +192,15 @@ def test_enumerate_molecules_stay_unchanged() -> None:
 
 def test_score_matches_reference() -> None:
     smis = corpus()
-    expected = [
-        None if (m := parse(s)) is None else TautomerEnumerator.ScoreTautomer(m) for s in smis
-    ]
-    assert score_tautomers(smis) == expected
+    assert score_tautomers(smis) == [score_reference(s) for s in smis]
     mols = [m for m in mols_from_smiles(smis) if m is not None]
     assert score_tautomers(mols) == [TautomerEnumerator.ScoreTautomer(m) for m in mols]
     assert score_tautomers([None, ""]) == [None, None]
+
+
+def score_reference(smiles: str) -> int | None:
+    mol = parse(smiles)
+    return None if mol is None else TautomerEnumerator.ScoreTautomer(mol)
 
 
 def reference_pick(group: Sequence[str]) -> str | None:
@@ -300,8 +302,4 @@ def test_benchmark_score_native(  # pragma: no cover
 ) -> None:
     result = benchmark(score_tautomers, benchmark_smis, n_threads=n_threads)
 
-    expected = [
-        None if (m := parse(s)) is None else TautomerEnumerator.ScoreTautomer(m)
-        for s in benchmark_smis
-    ]
-    assert result == expected
+    assert result == [score_reference(s) for s in benchmark_smis]

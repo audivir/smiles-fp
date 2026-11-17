@@ -9,7 +9,9 @@ use pyo3::{
 /// Molecules are copied first, serially, so the inputs stay unchanged. Releases the GIL for the
 /// computation. A molecule without rings has an empty scaffold, which is not invalid.
 #[pyfunction]
-#[pyo3(signature = (inputs, output="smiles", *, generic=false, include_chirality=true, n_threads=-1))]
+#[pyo3(signature = (
+    inputs, output="smiles", *, generic=false, include_chirality=true, n_threads=-1,
+))]
 pub fn murcko_scaffolds<'py>(
     py: Python<'py>,
     inputs: &Bound<'py, PySequence>,

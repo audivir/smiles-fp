@@ -15,7 +15,7 @@ from typing_extensions import override
 SMILES = list(conftest.get_cached_mols())[:300]
 
 
-def _signature(mol: Chem.Mol) -> tuple[list[int], list[tuple[int, int, float]]]:
+def signature(mol: Chem.Mol) -> tuple[list[int], list[tuple[int, int, float]]]:
     """Comparable description of an (also unsanitized) molecule."""
     atoms = [a.GetAtomicNum() for a in mol.GetAtoms()]  # type: ignore[no-untyped-call,unused-ignore]
     bonds = [
@@ -40,7 +40,7 @@ def test_mols_from_smiles_sanitize_flag(sanitize: bool) -> None:
     mols = smiles_fp.mols_from_smiles(SMILES, sanitize, n_threads=2)
     for smi, mol in zip(SMILES, mols, strict=True):
         assert mol is not None
-        assert _signature(mol) == _signature(Chem.MolFromSmiles(smi, sanitize))
+        assert signature(mol) == signature(Chem.MolFromSmiles(smi, sanitize))
 
 
 def test_mols_from_smiles_unsanitized_keeps_hs_and_ring_info() -> None:
@@ -142,7 +142,7 @@ def test_mols_to_smiles_rooted_at_atom_out_of_range_raises() -> None:
 
 @pytest.mark.parametrize("n_threads", [2, 12])
 def test_mols_to_smiles_repeated_molecule_objects(n_threads: int) -> None:
-    """Writing the same ROMol from several threads at once crashed RDKit before this was fixed."""
+    # writing the same ROMol from several threads at once crashed RDKit before this was fixed.
     big = max(MOLS, key=lambda m: m.GetNumAtoms())
     mols = [big] * 5_000 + MOLS + [big] * 5_000
     got = smiles_fp.mols_to_smiles(mols, n_threads=n_threads)
@@ -155,7 +155,7 @@ def test_mols_to_smiles_error_reports_first_position_of_repeated_molecule() -> N
         smiles_fp.mols_to_smiles([mol, mol], rooted_at_atom=99)
 
 
-def _expected_rooted(mols: list[Chem.Mol], roots: list[int | None]) -> list[str]:
+def expected_rooted(mols: list[Chem.Mol], roots: list[int | None]) -> list[str]:
     return [
         Chem.MolToSmiles(m, rootedAtAtom=-1 if r is None else r)
         for m, r in zip(mols, roots, strict=True)
@@ -166,7 +166,7 @@ def _expected_rooted(mols: list[Chem.Mol], roots: list[int | None]) -> list[str]
 def test_mols_to_smiles_rooted_at_atom_per_molecule(n_threads: int) -> None:
     roots: list[int | None] = [None if i % 4 == 3 else i % 3 for i in range(len(MOLS))]
     got = smiles_fp.mols_to_smiles(MOLS, rooted_at_atom=roots, n_threads=n_threads)
-    assert got == _expected_rooted(MOLS, roots)
+    assert got == expected_rooted(MOLS, roots)
     assert smiles_fp.mols_to_smiles(MOLS, rooted_at_atom=tuple(roots)) == got
 
 
@@ -175,19 +175,19 @@ def test_mols_to_smiles_rooted_at_atom_none_and_int() -> None:
     assert smiles_fp.mols_to_smiles(MOLS, rooted_at_atom=None) == default
     assert smiles_fp.mols_to_smiles(MOLS, rooted_at_atom=[None] * len(MOLS)) == default
     assert smiles_fp.mols_to_smiles(MOLS, rooted_at_atom=-1) == default
-    assert smiles_fp.mols_to_smiles(MOLS, rooted_at_atom=2) == _expected_rooted(
+    assert smiles_fp.mols_to_smiles(MOLS, rooted_at_atom=2) == expected_rooted(
         MOLS, [2] * len(MOLS)
     )
 
 
 @pytest.mark.parametrize("n_threads", [2, 12])
 def test_mols_to_smiles_same_molecule_with_different_roots(n_threads: int) -> None:
-    """One ROMol with many roots is still written by a single thread (no shared-molecule crash)."""
+    # one ROMol with many roots is still written by a single thread, so no shared-molecule crash.
     big = max(MOLS, key=lambda m: m.GetNumAtoms())
     mols = [big] * 4_000 + MOLS + [big] * 4_000
     roots: list[int | None] = [i % m.GetNumAtoms() if i % 5 else None for i, m in enumerate(mols)]
     got = smiles_fp.mols_to_smiles(mols, rooted_at_atom=roots, n_threads=n_threads)
-    assert got == _expected_rooted(mols, roots)
+    assert got == expected_rooted(mols, roots)
 
 
 @pytest.mark.parametrize("n_threads", [1, 4, 12])
@@ -198,7 +198,7 @@ def test_mols_to_smiles_few_molecules_many_roots_uses_copies(n_threads: int) -> 
     roots: list[int | None] = [i % m.GetNumAtoms() for i, m in enumerate(mols)]
     roots[::7] = [None] * len(roots[::7])
     got = smiles_fp.mols_to_smiles(mols, rooted_at_atom=roots, n_threads=n_threads)
-    assert got == _expected_rooted(mols, roots)
+    assert got == expected_rooted(mols, roots)
 
 
 @pytest.mark.parametrize("n_threads", [1, 3, 32])

@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from smiles_fp.helpers import FpOutput
 
 
-def _func_caller(
+def func_caller(
     fps: list[ExplicitBitVect],
     tmp_path: Path,
     mode: Literal["load", "save"],
@@ -37,8 +37,8 @@ def test_save_and_load_fingerprints_input(
     tmp_path: Path,
 ) -> None:
     test_fps = list(conftest.get_cached_fps().values())[:64]
-    _func_caller(test_fps, tmp_path, mode="save", typ=strpath)
-    loaded = _func_caller(test_fps, tmp_path, mode="load", typ=strpath)
+    func_caller(test_fps, tmp_path, mode="save", typ=strpath)
+    loaded = func_caller(test_fps, tmp_path, mode="load", typ=strpath)
     assert test_fps == loaded
 
 
@@ -46,8 +46,8 @@ def test_save_and_load_fingerprints(
     test_fps: list[ExplicitBitVect],
     tmp_path: Path,
 ) -> None:
-    _func_caller(test_fps, tmp_path, mode="save")
-    loaded = _func_caller(test_fps, tmp_path, mode="load")
+    func_caller(test_fps, tmp_path, mode="save")
+    loaded = func_caller(test_fps, tmp_path, mode="load")
     assert test_fps == loaded
 
 
@@ -56,8 +56,8 @@ def test_benchmark_save_fingerprints(  # pragma: no cover
     tmp_path: Path,
     benchmark: BenchmarkFixture,
 ) -> None:
-    benchmark(_func_caller, tmp_path=tmp_path, fps=benchmark_fps, mode="save")
-    loaded = _func_caller(benchmark_fps, tmp_path, mode="load")
+    benchmark(func_caller, tmp_path=tmp_path, fps=benchmark_fps, mode="save")
+    loaded = func_caller(benchmark_fps, tmp_path, mode="load")
     assert benchmark_fps == loaded
 
 
@@ -66,12 +66,12 @@ def test_benchmark_load_fingerprints(  # pragma: no cover
     tmp_path: Path,
     benchmark: BenchmarkFixture,
 ) -> None:
-    _func_caller(benchmark_fps, tmp_path, mode="save")
-    loaded = benchmark(_func_caller, tmp_path=tmp_path, fps=benchmark_fps, mode="load")
+    func_caller(benchmark_fps, tmp_path, mode="save")
+    loaded = benchmark(func_caller, tmp_path=tmp_path, fps=benchmark_fps, mode="load")
     assert benchmark_fps == loaded
 
 
-def _pickle(  # pragma: no cover
+def pickle_fps(  # pragma: no cover
     fps: list[ExplicitBitVect],
     path: Path,
 ) -> None:
@@ -79,7 +79,7 @@ def _pickle(  # pragma: no cover
         pickle.dump(fps, f)
 
 
-def _unpickle(  # pragma: no cover
+def unpickle_fps(  # pragma: no cover
     path: Path,
 ) -> list[ExplicitBitVect]:
     with path.open("rb") as f:
@@ -90,8 +90,8 @@ def test_benchmark_pickle_fingerprints(  # pragma: no cover
     benchmark_fps: list[ExplicitBitVect], tmp_path: Path, benchmark: BenchmarkFixture
 ) -> None:
     path = tmp_path / "test_fps.bin"
-    benchmark(_pickle, benchmark_fps, path)
-    loaded = _unpickle(path)
+    benchmark(pickle_fps, benchmark_fps, path)
+    loaded = unpickle_fps(path)
     assert benchmark_fps == loaded
 
 
@@ -101,12 +101,12 @@ def test_benchmark_unpickle_fingerprints(  # pragma: no cover
     benchmark: BenchmarkFixture,
 ) -> None:
     path = tmp_path / "test_fps.bin"
-    _pickle(benchmark_fps, path)
-    loaded = benchmark(_unpickle, path)
+    pickle_fps(benchmark_fps, path)
+    loaded = benchmark(unpickle_fps, path)
     assert benchmark_fps == loaded
 
 
-def _fp(smi: str, n_bits: int) -> ExplicitBitVect:
+def make_fp(smi: str, n_bits: int) -> ExplicitBitVect:
     from rdkit import Chem
     from rdkit.Chem import rdFingerprintGenerator as rdFPGen
 
@@ -117,26 +117,26 @@ def _fp(smi: str, n_bits: int) -> ExplicitBitVect:
 
 def test_save_fingerprints_unwritable_path_raises(tmp_path: Path) -> None:
     with pytest.raises(OSError, match="Could not open"):
-        smiles_fp.save_fingerprints([_fp("CCO", 512)], tmp_path / "missing_dir" / "fps.bin")
+        smiles_fp.save_fingerprints([make_fp("CCO", 512)], tmp_path / "missing_dir" / "fps.bin")
 
 
 def test_save_fingerprints_mixed_lengths_raises_and_leaves_no_file(tmp_path: Path) -> None:
     path = tmp_path / "fps.bin"
     with pytest.raises(ValueError, match="Inconsistent fingerprint lengths"):
-        smiles_fp.save_fingerprints([_fp("CCO", 512), _fp("CCO", 1024)], path)
+        smiles_fp.save_fingerprints([make_fp("CCO", 512), make_fp("CCO", 1024)], path)
     assert not path.exists()
 
 
 def test_save_fingerprints_wrong_item_type_raises(tmp_path: Path) -> None:
     path = tmp_path / "fps.bin"
     with pytest.raises(TypeError):
-        smiles_fp.save_fingerprints([_fp("CCO", 512), "not a fingerprint"], path)  # type: ignore[list-item]
+        smiles_fp.save_fingerprints([make_fp("CCO", 512), "not a fingerprint"], path)  # type: ignore[list-item]
     assert not path.exists()
 
 
 def test_load_fingerprints_truncated_file_raises(tmp_path: Path) -> None:
     path = tmp_path / "fps.bin"
-    smiles_fp.save_fingerprints([_fp("CCO", 512), _fp("CCN", 512)], path)
+    smiles_fp.save_fingerprints([make_fp("CCO", 512), make_fp("CCN", 512)], path)
     path.write_bytes(path.read_bytes()[:-8])
     with pytest.raises(ValueError, match="truncated"):
         smiles_fp.load_fingerprints(path)
@@ -165,7 +165,7 @@ def test_array_roundtrip_matches_bit_vectors(tmp_path: Path, n_bits: int) -> Non
 
 
 def test_array_and_bit_vector_files_are_identical(tmp_path: Path) -> None:
-    fps = [_fp(smi, 2048) for smi in conftest.read_smis()[:50]]
+    fps = [make_fp(smi, 2048) for smi in conftest.read_smis()[:50]]
     bit_strings = [fp.ToBitString() for fp in fps]  # type: ignore[no-untyped-call,unused-ignore]
     bits = np.array([list(bit_string) for bit_string in bit_strings], dtype=np.uint8)
     smiles_fp.save_fingerprints(fps, tmp_path / "fps.fp")
@@ -264,7 +264,7 @@ def test_packed_save_without_fingerprints_writes_empty_file(tmp_path: Path) -> N
 
 
 def test_packed_save_ignores_padding_of_a_bit_vector_equivalent(tmp_path: Path) -> None:
-    fps = [_fp(smi, 2048) for smi in conftest.read_smis()[:20]]
+    fps = [make_fp(smi, 2048) for smi in conftest.read_smis()[:20]]
     path = tmp_path / "fps.fp"
     smiles_fp.save_fingerprints(fps, path)
     blocks = np.fromfile(path, dtype="<u8", offset=8).reshape(len(fps), -1)
@@ -305,7 +305,7 @@ def test_packed_save_invalid_input_raises_and_leaves_no_file(
 
 
 def test_save_bit_vectors_with_n_bits_raises(tmp_path: Path) -> None:
-    fps = [_fp(smi, 64) for smi in conftest.read_smis()[:3]]
+    fps = [make_fp(smi, 64) for smi in conftest.read_smis()[:3]]
     with pytest.raises(ValueError, match="n_bits is only used for packed"):
         smiles_fp.save_fingerprints(fps, tmp_path / "fps.fp", n_bits=64)
     assert not (tmp_path / "fps.fp").exists()

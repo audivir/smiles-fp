@@ -72,8 +72,8 @@ def bulk_tanimoto_parallel(
     Args:
         py_fps: The first sequence of RDKit fingerprints or NDArray.
         py_fps2: The second sequence of RDKit fingerprints or NDArray.
-        n_threads: The number of threads to use. Defaults to -1 (auto-detect).
-        agg: Aggregation method. Defaults to 'full'.
+        n_threads: The number of threads to use, where -1 detects the count automatically.
+        agg: Aggregation method.
 
     Returns:
         A 2D NumPy array with the similarity matrix if agg is None/'full' or
@@ -96,7 +96,7 @@ def bulk_tanimoto_parallel_topk(
         py_fps: Sequence of fingerprints or NDArray for the query.
         py_fps2: Sequence of fingerprints or NDArray for the database to query from.
         k: Number of most-similar molecules to query for.
-        n_threads: The number of threads to use. Defaults to -1 (auto-detect).
+        n_threads: The number of threads to use, where -1 detects the count automatically.
 
     Returns:
         A tuple with a 2D NumPy array containing the indices of the similarities and
@@ -120,8 +120,8 @@ def bulk_tanimoto_mmap(
     Args:
         path1: Path to the query binary fingerprint file.
         path2: Path to the database binary fingerprint file.
-        n_threads: The number of threads to use. Defaults to -1 (auto-detect).
-        agg: Aggregation method. Defaults to 'full'.
+        n_threads: The number of threads to use, where -1 detects the count automatically.
+        agg: Aggregation method.
         db_offset: Starting index in the second sequence to process (for windowing).
         db_limit: Number of items in the second sequence to process (0 means all).
 
@@ -143,8 +143,8 @@ def bulk_tanimoto_mmap_topk(
     Args:
         path1: Path to the query binary fingerprint file.
         path2: Path to the database binary fingerprint file.
-        k: Number of most-similar molecules to query for. Defaults to 10.
-        n_threads: The number of threads to use. Defaults to -1 (auto-detect).
+        k: Number of most-similar molecules to query for.
+        n_threads: The number of threads to use, where -1 detects the count automatically.
         db_offset: Starting index in the database to process (for windowing).
         db_limit: Number of items in the database to process (0 means all).
 
@@ -162,8 +162,8 @@ def internal_tanimoto_parallel(
 
     Args:
         py_fps: The sequence of RDKit fingerprints or NDArray.
-        n_threads: The number of threads to use. Defaults to -1 (auto-detect).
-        agg: Aggregation method. Defaults to 'full'.
+        n_threads: The number of threads to use, where -1 detects the count automatically.
+        agg: Aggregation method.
 
     Returns:
         If agg is 'full' or None, returns a 1D condensed distance matrix array
@@ -185,8 +185,8 @@ def internal_tanimoto_mmap(
 
     Args:
         path: Path to the binary fingerprint file.
-        n_threads: The number of threads to use. Defaults to -1 (auto-detect).
-        agg: Aggregation method. Defaults to 'full'.
+        n_threads: The number of threads to use, where -1 detects the count automatically.
+        agg: Aggregation method.
 
     Returns:
         If agg is 'full' or None, returns a 1D condensed distance matrix array
@@ -213,7 +213,7 @@ def save_morgan_fps_from_smiles(
         filename: The path to the output file.
         radius: Radius of the fingerprint.
         n_bits: Size of the fingerprint.
-        n_threads: The number of threads to use. Defaults to -1 (auto-detect).
+        n_threads: The number of threads to use, where -1 detects the count automatically.
 
     Raises:
         ValueError: If a SMILES is invalid (no file is written) or `n_bits` is zero.
@@ -230,7 +230,7 @@ def mols_from_smiles(
     Args:
         smiles: Sequence of SMILES strings to parse.
         sanitize: Whether to sanitize and remove Hs.
-        n_threads: The number of threads to use. Defaults to -1 (auto-detect).
+        n_threads: The number of threads to use, where -1 detects the count automatically.
 
     Returns:
         A list with a molecule per SMILES, or None where parsing failed.
@@ -268,7 +268,7 @@ def mols_to_smiles(
         all_bonds_explicit: Write the symbol of every bond.
         all_hs_explicit: Write the H count of every atom.
         ignore_atom_map_numbers: Ignore atom map numbers when canonicalizing.
-        n_threads: The number of threads to use. Defaults to -1 (auto-detect).
+        n_threads: The number of threads to use, where -1 detects the count automatically.
 
     Returns:
         A list with each molecule's SMILES.
@@ -292,7 +292,7 @@ def _strip_salts(
     Args:
         mols: A sequence of RDKit molecules, which stay unchanged.
         dont_remove_everything: Whether to keep the last salt if all fragments would be removed.
-        n_threads: The number of threads to use. Defaults to -1 (auto-detect).
+        n_threads: The number of threads to use, where -1 detects the count automatically.
 
     Returns:
         A list with a stripped molecule per input, or None where sanitizing it failed.
@@ -341,7 +341,7 @@ def clean(
         inplace: Whether to clean molecules in place instead of copying them. Holds the GIL, so
             other Python threads cannot use the molecules, and the molecules must not be used by a
             GIL-released RDKit function in another thread. An invalid molecule stays unchanged.
-        n_threads: The number of threads to use. Defaults to -1 (auto-detect).
+        n_threads: The number of threads to use, where -1 detects the count automatically.
 
     Returns:
         With `inplace`, whether each molecule is valid. Otherwise a list with one result per
@@ -411,7 +411,7 @@ def murcko_scaffolds(
             become carbon and all bonds single.
         include_chirality: Whether to keep stereochemistry and isotopes. Without them, the SMILES
             equal those of `MurckoScaffoldSmiles` with its default `includeChirality=False`.
-        n_threads: The number of threads to use. Defaults to -1 (auto-detect).
+        n_threads: The number of threads to use, where -1 detects the count automatically.
 
     Returns:
         A list with one scaffold per input, or None where it is invalid or RDKit fails. The
@@ -462,7 +462,7 @@ def canonical_tautomers(
         remove_isotopic_hs: Whether to remove isotopic hydrogens that tautomerization can move.
         reassign_stereo: Whether to assign the stereochemistry again after tautomerization.
         v1: Whether to use the transformations of the older `GetV1TautomerEnumerator`.
-        n_threads: The number of threads to use. Defaults to -1 (auto-detect).
+        n_threads: The number of threads to use, where -1 detects the count automatically.
 
     Returns:
         A list with one tautomer per input, or None where it is invalid, RDKit fails, or the
@@ -518,7 +518,7 @@ def enumerate_tautomers(
         remove_isotopic_hs: Whether to remove isotopic hydrogens that tautomerization can move.
         reassign_stereo: Whether to assign the stereochemistry again after tautomerization.
         v1: Whether to use the transformations of the older `GetV1TautomerEnumerator`.
-        n_threads: The number of threads to use. Defaults to -1 (auto-detect).
+        n_threads: The number of threads to use, where -1 detects the count automatically.
 
     Returns:
         A list with one tuple per input of its tautomers, sorted by SMILES, and the status of the
@@ -554,7 +554,7 @@ def score_tautomers(
 
     Args:
         inputs: SMILES strings, where None and empty strings are invalid, or molecules.
-        n_threads: The number of threads to use. Defaults to -1 (auto-detect).
+        n_threads: The number of threads to use, where -1 detects the count automatically.
 
     Returns:
         A list with the score per input, where higher is better, or None where it is invalid or
@@ -579,7 +579,7 @@ def pick_canonical_tautomers(
     Args:
         groups: Groups of tautomers as SMILES strings or molecules.
         output: Whether to return SMILES or molecules.
-        n_threads: The number of threads to use. Defaults to -1 (auto-detect).
+        n_threads: The number of threads to use, where -1 detects the count automatically.
 
     Returns:
         A list with the best tautomer per group, or None where the group is empty, has an invalid

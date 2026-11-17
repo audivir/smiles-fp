@@ -40,7 +40,7 @@ fn reparses(smiles: &str) -> bool {
     has_atoms
 }
 
-/// Takes a new molecule from a transformation and returns it as SMILES or keeps it as molecule.
+/// Returns a new molecule as SMILES, or keeps it as molecule.
 ///
 /// With `verify`, a result whose SMILES do not parse to a molecule with atoms is invalid, whether
 /// it is returned as SMILES or as molecule.
@@ -88,7 +88,7 @@ pub(crate) fn wrap_ptrs<'py>(py: Python<'py>, ptrs: &[usize]) -> PyResult<Bound<
     )
 }
 
-/// Turns results into a Python list of SMILES or molecules, with `None` for invalid ones.
+/// Turns results into a Python list, with `None` for invalid ones.
 pub(crate) fn outputs_to_py<'py>(
     py: Python<'py>,
     results: Vec<Output>,
@@ -117,8 +117,10 @@ pub(crate) enum Inputs {
     Mols(OwnedMols),
 }
 
-/// Copies molecules to private ones, serially, as copying a shared `ROMol` from several threads
-/// is not known to be safe. Afterwards no thread touches the originals.
+/// Copies molecules to private ones, serially.
+///
+/// Copying a shared `ROMol` from several threads is not known to be safe. Afterwards no thread
+/// touches the originals.
 pub(crate) fn copy_mols(py: Python<'_>, seq: &Bound<'_, PySequence>) -> PyResult<OwnedMols> {
     let batch =
         ffi::extract_mol_ptrs(seq.as_ptr() as usize).map_err(|e| ffi_error(py, e, false))?;

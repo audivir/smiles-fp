@@ -28,7 +28,6 @@ def temp_db(tmp_path: Path) -> tuple[Path, Path]:
 
 
 def test_similarity_search(temp_db: tuple[Path, Path]) -> None:
-    """Verifies similarity_search returns correct dict structure and top-k."""
     q_path, db_path = temp_db
 
     with q_path.open("rb") as f:

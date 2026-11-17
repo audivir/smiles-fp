@@ -44,7 +44,7 @@ def benchmark_sims(  # pragma: no cover
     return get_sims(benchmark_fps)
 
 
-def _func_caller(  # noqa: PLR0913,PLR0917
+def func_caller(  # noqa: PLR0913,PLR0917
     fps: list[ExplicitBitVect],
     n_threads: int = 8,
     k: int | None = None,
@@ -86,14 +86,14 @@ def _func_caller(  # noqa: PLR0913,PLR0917
     return smiles_fp.bulk_tanimoto_parallel(fps, fps, **kwargs)
 
 
-def _single(  # pragma: no cover
+def rdkit_single(  # pragma: no cover
     fps1: list[ExplicitBitVect],
     fps2: list[ExplicitBitVect],
 ) -> NDArray[np.float64]:
     return np.array([[DataStructs.TanimotoSimilarity(fp1, fp2) for fp2 in fps2] for fp1 in fps1])
 
 
-def _bulk(  # pragma: no cover
+def rdkit_bulk(  # pragma: no cover
     fps1: list[ExplicitBitVect],
     fps2: list[ExplicitBitVect],
 ) -> NDArray[np.float64]:
@@ -109,7 +109,7 @@ def test_bulk_tanimoto_parallel(
     test_sims: NDArray[np.float64],
     tmp_path: Path,
 ) -> None:
-    sims = _func_caller(test_fps, n_threads, tmp_path=tmp_path, mmap=mmap)
+    sims = func_caller(test_fps, n_threads, tmp_path=tmp_path, mmap=mmap)
     np.testing.assert_array_equal(sims, test_sims)
 
 
@@ -120,18 +120,18 @@ def test_bulk_tanimoto_mmap_input(
 ) -> None:
     test_fps = list(conftest.get_cached_fps().values())[:64]
     test_sims = get_sims(test_fps)
-    sims = _func_caller(test_fps, typ=strpath, tmp_path=tmp_path, mmap=True)
+    sims = func_caller(test_fps, typ=strpath, tmp_path=tmp_path, mmap=True)
     np.testing.assert_array_equal(sims, test_sims)
 
 
-@pytest.mark.parametrize("func", [_single, _bulk], ids=["single", "bulk"])
+@pytest.mark.parametrize("func", [rdkit_single, rdkit_bulk], ids=["single", "bulk"])
 def test_benchmark_rdkit_tanimoto(  # pragma: no cover
     func: Callable[[Sequence[ExplicitBitVect], Sequence[ExplicitBitVect]], NDArray[np.float64]],
     benchmark_fps: list[ExplicitBitVect],
     benchmark_sims: NDArray[np.float64],
     benchmark: BenchmarkFixture,
 ) -> None:
-    if func == _single:
+    if func == rdkit_single:
         pytest.skip(reason="Takes too long")
 
     sims = benchmark(
@@ -159,7 +159,7 @@ def test_benchmark_bulk_tanimoto_parallel(  # noqa: PLR0913,PLR0917 # pragma: no
         pytest.skip("bulk_tanimoto_parallel is too memory intensive, skipping")
 
     sims = benchmark(
-        _func_caller,
+        func_caller,
         fps=benchmark_fps,
         n_threads=n_threads,
         tmp_path=tmp_path,
@@ -181,7 +181,7 @@ def test_internal_tanimoto(n: int, mmap: bool, tmp_path: Path) -> None:
     test_sims = np.array(get_sims(test_fps))
     np.fill_diagonal(test_sims, 0.0)
 
-    sims = _func_caller(test_fps, tmp_path=tmp_path, mmap=mmap, internal=True)
+    sims = func_caller(test_fps, tmp_path=tmp_path, mmap=mmap, internal=True)
     if isinstance(sims, tuple):  # pragma: no cover
         raise TypeError("top k result instead of similarity matrix")
     sims = smiles_fp.to_matrix(sims, n)
@@ -200,12 +200,12 @@ def test_internal_tanimoto_agg(
 ) -> None:
     test_fps = list(conftest.get_cached_fps().values())[:n]
 
-    vector = _func_caller(test_fps, tmp_path=tmp_path, mmap=mmap, internal=True)
+    vector = func_caller(test_fps, tmp_path=tmp_path, mmap=mmap, internal=True)
     if isinstance(vector, tuple):  # pragma: no cover
         raise TypeError("top k result instead of similarity matrix")
     full_matrix = smiles_fp.to_matrix(vector, n)
 
-    rust_agg = _func_caller(test_fps, agg=agg, tmp_path=tmp_path, mmap=mmap, internal=True)
+    rust_agg = func_caller(test_fps, agg=agg, tmp_path=tmp_path, mmap=mmap, internal=True)
 
     if full_matrix.size == 0:
         np.testing.assert_array_equal(rust_agg, conftest.zero_array(1))
@@ -236,12 +236,12 @@ def test_bulk_tanimoto_agg(
     test_fps: list[ExplicitBitVect],
     tmp_path: Path,
 ) -> None:
-    full_matrix = _func_caller(test_fps, tmp_path=tmp_path, mmap=mmap)
+    full_matrix = func_caller(test_fps, tmp_path=tmp_path, mmap=mmap)
 
     if isinstance(full_matrix, tuple):  # pragma: no cover
         raise TypeError("top k result instead of similarity matrix")
 
-    rust_agg = _func_caller(test_fps, agg=agg, tmp_path=tmp_path, mmap=mmap)
+    rust_agg = func_caller(test_fps, agg=agg, tmp_path=tmp_path, mmap=mmap)
 
     if full_matrix.size == 0:
         np.testing.assert_array_equal(rust_agg, conftest.zero_array(1))
@@ -258,8 +258,8 @@ def test_bulk_tanimoto_agg(
 @pytest.mark.parametrize("k", [1, 5], ids=["k1", "k5"])
 @pytest.mark.parametrize("mmap", [True, False], ids=["mmap", "direct"])
 def test_top_k_search(k: int, mmap: bool, test_fps: list[ExplicitBitVect], tmp_path: Path) -> None:
-    full_matrix = _func_caller(test_fps, tmp_path=tmp_path, mmap=mmap)
-    idx, scores = _func_caller(test_fps, k=k, tmp_path=tmp_path, mmap=mmap)
+    full_matrix = func_caller(test_fps, tmp_path=tmp_path, mmap=mmap)
+    idx, scores = func_caller(test_fps, k=k, tmp_path=tmp_path, mmap=mmap)
 
     for i in range(len(full_matrix)):
         # Numpy argsort (ascending), take last K, reverse to descending
@@ -282,7 +282,7 @@ def test_windowing_offsets(
     test_fps: list[ExplicitBitVect],
     tmp_path: Path,
 ) -> None:
-    full_matrix = _func_caller(test_fps, tmp_path=tmp_path, mmap=True)
+    full_matrix = func_caller(test_fps, tmp_path=tmp_path, mmap=True)
 
     if isinstance(full_matrix, tuple):  # pragma: no cover
         raise TypeError("top k result instead of similarity matrix")
@@ -291,7 +291,7 @@ def test_windowing_offsets(
     chunk_size = max(1, total_db_fps // 2)
 
     # Process just the second chunk
-    chunked_matrix = _func_caller(
+    chunked_matrix = func_caller(
         test_fps,
         db_offset=chunk_size,
         db_limit=chunk_size,
@@ -305,7 +305,7 @@ def test_windowing_offsets(
     np.testing.assert_array_equal(chunked_matrix, expected_slice)
 
 
-def _bit_vect(n_bits: int) -> ExplicitBitVect:
+def bit_vect(n_bits: int) -> ExplicitBitVect:
     from rdkit import Chem
     from rdkit.Chem import rdFingerprintGenerator as rdFPGen
 
@@ -316,8 +316,8 @@ def _bit_vect(n_bits: int) -> ExplicitBitVect:
 
 @pytest.mark.parametrize("func", ["bulk", "bulk_topk", "internal"])
 def test_parallel_invalid_input_raises_instead_of_empty_result(func: str) -> None:
-    mixed = [_bit_vect(512), _bit_vect(1024)]
-    good = [_bit_vect(512)]
+    mixed = [bit_vect(512), bit_vect(1024)]
+    good = [bit_vect(512)]
     with pytest.raises(ValueError, match="Inconsistent fingerprint lengths"):  # noqa: PT012
         if func == "bulk":
             smiles_fp.bulk_tanimoto_parallel(mixed, good)
@@ -332,7 +332,7 @@ def test_parallel_invalid_input_raises_instead_of_empty_result(func: str) -> Non
 @pytest.mark.parametrize("func", ["bulk", "bulk_topk", "internal"])
 def test_mmap_truncated_file_raises(func: str, tmp_path: Path) -> None:
     path = tmp_path / "fps.bin"
-    smiles_fp.save_fingerprints([_bit_vect(512), _bit_vect(512)], path)
+    smiles_fp.save_fingerprints([bit_vect(512), bit_vect(512)], path)
     path.write_bytes(path.read_bytes()[:-8])
     with pytest.raises(ValueError, match="truncated"):  # noqa: PT012
         if func == "bulk":

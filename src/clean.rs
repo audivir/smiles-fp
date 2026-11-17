@@ -159,8 +159,9 @@ fn clean_inplace<'py>(
     Ok(PyList::new(py, slots.iter().map(|&s| valid[s]))?.into_any())
 }
 
-/// Tells whether the inputs are SMILES (also if they start with `None`) or molecules, judging by
-/// the first item, or returns `None` for no items.
+/// Tells whether inputs are SMILES or molecules, judging by the first item.
+///
+/// A leading `None` counts as SMILES. Returns `None` for no items.
 pub(crate) fn is_smiles_input(inputs: &Bound<'_, PySequence>) -> PyResult<Option<bool>> {
     if inputs.len()? == 0 {
         return Ok(None);

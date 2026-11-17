@@ -6,7 +6,7 @@ import struct
 from collections.abc import Sequence
 from multiprocessing import cpu_count
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypeAlias, cast, get_args, overload
+from typing import TYPE_CHECKING, Literal, TypeAlias, get_args, overload
 
 from rdkit import Chem
 from rdkit.Chem import rdFingerprintGenerator as rdFPGen
@@ -128,9 +128,9 @@ def save_fingerprints(
     elif bits_per_fp < 1:
         raise ValueError("Fingerprints must have at least one bit")
     elif is_packed:
-        blocks = check_blocks(cast("NDArray[np.uint64]", py_fps), bits_per_fp)
+        blocks = check_blocks(np.asarray(py_fps, dtype=np.uint64), bits_per_fp)
     else:
-        blocks = pack_bits(cast("NDArray[np.uint8]", py_fps))
+        blocks = pack_bits(np.asarray(py_fps, dtype=np.uint8))
 
     path = Path(filename)
     try:
@@ -287,7 +287,7 @@ def get_mols(
 
     Args:
         smis: Iterable of SMILES strings to convert.
-        n_jobs: Number of threads. Defaults to -1 (auto-detect).
+        n_jobs: Number of threads, where -1 detects the count automatically.
         verbose: Ignored.
         sanitize: Whether to sanitize and remove Hs.
 
@@ -352,7 +352,7 @@ def get_morgan_fps(
         mols: A sequence of RDKit molecules.
         radius: Radius of the fingerprint.
         n_bits: Size of the fingerprint.
-        n_threads: Number of threads. Defaults to -1 (auto-detect).
+        n_threads: Number of threads, where -1 detects the count automatically.
         output: The format of the fingerprints: a tuple of RDKit bit vectors, an unpacked uint8
             NDArray with one bit per column, or a packed uint64 NDArray of 64-bit blocks, whose
             last block may be padded with zeros.

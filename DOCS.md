@@ -77,7 +77,7 @@ Converts a batch of SMILES to RDKit molecules, fails on any invalid SMILES.
 **Arguments**
 
 - `smis`: Iterable of SMILES strings to convert.
-- `n_jobs`: Number of threads. Defaults to -1 (auto-detect).
+- `n_jobs`: Number of threads, where -1 detects the count automatically.
 - `verbose`: Ignored.
 - `sanitize`: Whether to sanitize and remove Hs.
 
@@ -106,7 +106,7 @@ Parses SMILES to RDKit molecules multi-threaded.
 
 - `smiles`: Sequence of SMILES strings to parse.
 - `sanitize`: Whether to sanitize and remove Hs.
-- `n_threads`: The number of threads to use. Defaults to -1 (auto-detect).
+- `n_threads`: The number of threads to use, where -1 detects the count automatically.
 
 **Returns**
 
@@ -149,7 +149,7 @@ and re-written at each position.
 - `all_bonds_explicit`: Write the symbol of every bond.
 - `all_hs_explicit`: Write the H count of every atom.
 - `ignore_atom_map_numbers`: Ignore atom map numbers when canonicalizing.
-- `n_threads`: The number of threads to use. Defaults to -1 (auto-detect).
+- `n_threads`: The number of threads to use, where -1 detects the count automatically.
 
 **Returns**
 
@@ -236,7 +236,7 @@ no Python objects until the end.
 - `neutralize`: Whether to neutralize charges. Groups of neutral species, like nitro, stay.
 - `verify`: Whether to parse the written SMILES again as a check. Skipping it saves a third of the time. Has no effect with `output="mol"` for SMILES, which are parsed anyway.
 - `inplace`: Whether to clean molecules in place instead of copying them. Holds the GIL, so other Python threads cannot use the molecules, and the molecules must not be used by a GIL-released RDKit function in another thread. An invalid molecule stays unchanged.
-- `n_threads`: The number of threads to use. Defaults to -1 (auto-detect).
+- `n_threads`: The number of threads to use, where -1 detects the count automatically.
 
 **Returns**
 
@@ -284,7 +284,7 @@ stay unchanged.
 - `output`: Whether to return canonical SMILES or scaffold molecules.
 - `generic`: Whether to make the scaffold generic like `MakeScaffoldGeneric`, where all atoms become carbon and all bonds single.
 - `include_chirality`: Whether to keep stereochemistry and isotopes. Without them, the SMILES equal those of `MurckoScaffoldSmiles` with its default `includeChirality=False`.
-- `n_threads`: The number of threads to use. Defaults to -1 (auto-detect).
+- `n_threads`: The number of threads to use, where -1 detects the count automatically.
 
 **Returns**
 
@@ -343,7 +343,7 @@ enumerator. Molecules are copied first and stay unchanged. The defaults are thos
 - `remove_isotopic_hs`: Whether to remove isotopic hydrogens that tautomerization can move.
 - `reassign_stereo`: Whether to assign the stereochemistry again after tautomerization.
 - `v1`: Whether to use the transformations of the older `GetV1TautomerEnumerator`.
-- `n_threads`: The number of threads to use. Defaults to -1 (auto-detect).
+- `n_threads`: The number of threads to use, where -1 detects the count automatically.
 
 **Returns**
 
@@ -402,7 +402,7 @@ enumerator. Molecules are copied first and stay unchanged.
 - `remove_isotopic_hs`: Whether to remove isotopic hydrogens that tautomerization can move.
 - `reassign_stereo`: Whether to assign the stereochemistry again after tautomerization.
 - `v1`: Whether to use the transformations of the older `GetV1TautomerEnumerator`.
-- `n_threads`: The number of threads to use. Defaults to -1 (auto-detect).
+- `n_threads`: The number of threads to use, where -1 detects the count automatically.
 
 **Returns**
 
@@ -431,7 +431,7 @@ stay unchanged.
 **Arguments**
 
 - `inputs`: SMILES strings, where None and empty strings are invalid, or molecules.
-- `n_threads`: The number of threads to use. Defaults to -1 (auto-detect).
+- `n_threads`: The number of threads to use, where -1 detects the count automatically.
 
 **Returns**
 
@@ -468,7 +468,7 @@ stay unchanged.
 
 - `groups`: Groups of tautomers as SMILES strings or molecules.
 - `output`: Whether to return SMILES or molecules.
-- `n_threads`: The number of threads to use. Defaults to -1 (auto-detect).
+- `n_threads`: The number of threads to use, where -1 detects the count automatically.
 
 **Returns**
 
@@ -521,7 +521,7 @@ Converts RDKit molecules to Morgan fingerprints.
 - `mols`: A sequence of RDKit molecules.
 - `radius`: Radius of the fingerprint.
 - `n_bits`: Size of the fingerprint.
-- `n_threads`: Number of threads. Defaults to -1 (auto-detect).
+- `n_threads`: Number of threads, where -1 detects the count automatically.
 - `output`: The format of the fingerprints: a tuple of RDKit bit vectors, an unpacked uint8 NDArray with one bit per column, or a packed uint64 NDArray of 64-bit blocks, whose last block may be padded with zeros.
 
 **Returns**
@@ -556,7 +556,7 @@ Equivalent to `mols_from_smiles`, `rdFingerprintGenerator.GetMorganGenerator`, a
 - `filename`: The path to the output file.
 - `radius`: Radius of the fingerprint.
 - `n_bits`: Size of the fingerprint.
-- `n_threads`: The number of threads to use. Defaults to -1 (auto-detect).
+- `n_threads`: The number of threads to use, where -1 detects the count automatically.
 
 **Raises**
 
@@ -670,8 +670,8 @@ Calculates Tanimoto similarities in parallel from RDKit fingerprints.
 
 - `py_fps`: The first sequence of RDKit fingerprints or NDArray.
 - `py_fps2`: The second sequence of RDKit fingerprints or NDArray.
-- `n_threads`: The number of threads to use. Defaults to -1 (auto-detect).
-- `agg`: Aggregation method. Defaults to 'full'.
+- `n_threads`: The number of threads to use, where -1 detects the count automatically.
+- `agg`: Aggregation method.
 
 **Returns**
 
@@ -700,7 +700,7 @@ Finds the top-K highest similarity scores for each query in memory.
 - `py_fps`: Sequence of fingerprints or NDArray for the query.
 - `py_fps2`: Sequence of fingerprints or NDArray for the database to query from.
 - `k`: Number of most-similar molecules to query for.
-- `n_threads`: The number of threads to use. Defaults to -1 (auto-detect).
+- `n_threads`: The number of threads to use, where -1 detects the count automatically.
 
 **Returns**
 
@@ -726,8 +726,8 @@ Calculates internal (pairwise) similarities for a dataset in parallel.
 **Arguments**
 
 - `py_fps`: The sequence of RDKit fingerprints or NDArray.
-- `n_threads`: The number of threads to use. Defaults to -1 (auto-detect).
-- `agg`: Aggregation method. Defaults to 'full'.
+- `n_threads`: The number of threads to use, where -1 detects the count automatically.
+- `agg`: Aggregation method.
 
 **Returns**
 
@@ -783,8 +783,8 @@ Calculates Tanimoto similarities in parallel from binary files using memory-mapp
 
 - `path1`: Path to the query binary fingerprint file.
 - `path2`: Path to the database binary fingerprint file.
-- `n_threads`: The number of threads to use. Defaults to -1 (auto-detect).
-- `agg`: Aggregation method. Defaults to 'full'.
+- `n_threads`: The number of threads to use, where -1 detects the count automatically.
+- `agg`: Aggregation method.
 - `db_offset`: Starting index in the second sequence to process (for windowing).
 - `db_limit`: Number of items in the second sequence to process (0 means all).
 
@@ -811,8 +811,8 @@ Finds the top-K highest similarity scores for each query using memory-mapping.
 
 - `path1`: Path to the query binary fingerprint file.
 - `path2`: Path to the database binary fingerprint file.
-- `k`: Number of most-similar molecules to query for. Defaults to 10.
-- `n_threads`: The number of threads to use. Defaults to -1 (auto-detect).
+- `k`: Number of most-similar molecules to query for.
+- `n_threads`: The number of threads to use, where -1 detects the count automatically.
 - `db_offset`: Starting index in the database to process (for windowing).
 - `db_limit`: Number of items in the database to process (0 means all).
 
@@ -835,8 +835,8 @@ Calculates internal (pairwise) similarities from a binary file using memory-mapp
 **Arguments**
 
 - `path`: Path to the binary fingerprint file.
-- `n_threads`: The number of threads to use. Defaults to -1 (auto-detect).
-- `agg`: Aggregation method. Defaults to 'full'.
+- `n_threads`: The number of threads to use, where -1 detects the count automatically.
+- `agg`: Aggregation method.
 
 **Returns**
 
@@ -868,7 +868,7 @@ Searches for the top k similar fingerprints in a list of fingerprints.
 - `db_ids`: Any identifier for each comparison fingerprint.
 - `db`: Path to the database binary fingerprint file.
 - `k`: Number of most-similar molecules to query for.
-- `n_threads`: The number of threads to use. Defaults to -1 (auto-detect).
+- `n_threads`: The number of threads to use, where -1 detects the count automatically.
 
 **Returns**
 
@@ -893,8 +893,8 @@ Yields chunked similarity matrices to prevent out-of-memory errors.
 - `query`: Path to the query binary fingerprint file.
 - `db`: Path to the database binary fingerprint file.
 - `window_size`: Size of the window
-- `n_threads`: The number of threads to use. Defaults to -1 (auto-detect).
-- `agg`: Aggregation method, "mean" is not supported. Defaults to 'full'.
+- `n_threads`: The number of threads to use, where -1 detects the count automatically.
+- `agg`: Aggregation method, where "mean" is not supported.
 
 **Returns**
 
