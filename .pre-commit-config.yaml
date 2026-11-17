@@ -100,6 +100,11 @@ repos:
         language: system
         types: [rust]
         require_serial: true
+      - id: docs
+        name: generate DOCS.md
+        entry: python scripts/gen_docs.py
+        language: system
+        files: ^(python/smiles_fp/(_smiles_fp\.pyi|helpers\.py|search\.py)|scripts/gen_docs\.py)$
         pass_filenames: false
       - id: clippy
         name: clippy
