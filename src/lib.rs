@@ -91,7 +91,7 @@ mod ffi {
         fn make_cleaner(opts: &CleanOpts, allowed: &[u32], salt_lines: &str) -> Result<usize>;
         fn free_cleaner(cleaner: usize);
         fn clean_mol_inplace_raw(cleaner: usize, mol_ptr: usize) -> bool;
-        fn murcko_raw(mol_ptr: usize) -> usize;
+        fn murcko_raw(mol_ptr: usize, generic: bool, include_chirality: bool) -> usize;
         fn make_tautomerizer(opts: &TautomerOpts) -> usize;
         fn free_tautomerizer(tautomerizer: usize);
         fn tautomer_raw(tautomerizer: usize, mol_ptr: usize) -> usize;

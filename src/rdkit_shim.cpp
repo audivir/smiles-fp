@@ -513,7 +513,7 @@ bool clean_mol_inplace_raw(size_t cleaner, size_t mol_ptr) {
   }
 }
 
-size_t murcko_raw(size_t mol_ptr) {
+size_t murcko_raw(size_t mol_ptr, bool generic, bool include_chirality) {
   try {
     const auto* mol = reinterpret_cast<const RDKit::ROMol*>(mol_ptr);
     std::unique_ptr<RDKit::ROMol> scaffold(RDKit::MurckoDecompose(*mol));
@@ -521,7 +521,32 @@ size_t murcko_raw(size_t mol_ptr) {
     scaffold->clearComputedProps();
     scaffold->updatePropertyCache();
     RDKit::MolOps::symmetrizeSSSR(*scaffold);
-    return reinterpret_cast<size_t>(scaffold.release());
+    auto result = std::make_unique<RDKit::RWMol>(*scaffold);
+    if (generic) {
+      // the same steps as `MakeScaffoldGeneric` in Python.
+      for (unsigned i = 0; i < result->getNumAtoms(); ++i) {
+        RDKit::Atom* atom = result->getAtomWithIdx(i);
+        if (atom->getAtomicNum() != 1) atom->setAtomicNum(6);
+        atom->setIsAromatic(false);
+        atom->setIsotope(0);
+        atom->setFormalCharge(0);
+        atom->setChiralTag(RDKit::Atom::CHI_UNSPECIFIED);
+        atom->setNoImplicit(false);
+        atom->setNumExplicitHs(0);
+      }
+      for (unsigned i = 0; i < result->getNumBonds(); ++i) {
+        RDKit::Bond* bond = result->getBondWithIdx(i);
+        bond->setBondType(RDKit::Bond::SINGLE);
+        bond->setIsAromatic(false);
+      }
+      RDKit::MolOps::removeHs(*result);
+    }
+    if (!include_chirality) {
+      // what `isomericSmiles=False` leaves out, also for a returned molecule.
+      for (unsigned i = 0; i < result->getNumAtoms(); ++i) result->getAtomWithIdx(i)->setIsotope(0);
+      RDKit::MolOps::removeStereochemistry(*result);
+    }
+    return reinterpret_cast<size_t>(new RDKit::ROMol(*result));
   } catch (...) {
     return 0;
   }

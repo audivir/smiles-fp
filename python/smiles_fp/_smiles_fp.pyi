@@ -395,6 +395,8 @@ def murcko_scaffolds(
     inputs: Sequence[str | None] | Sequence[Chem.Mol],
     output: Literal["smiles"] = "smiles",
     *,
+    generic: bool = False,
+    include_chirality: bool = True,
     n_threads: int = -1,
 ) -> list[str | None]:
     """Computes Murcko scaffolds multi-threaded like `MurckoScaffold.GetScaffoldForMol`.
@@ -405,6 +407,10 @@ def murcko_scaffolds(
     Args:
         inputs: SMILES strings, where None and empty strings are invalid, or molecules.
         output: Whether to return canonical SMILES or scaffold molecules.
+        generic: Whether to make the scaffold generic like `MakeScaffoldGeneric`, where all atoms
+            become carbon and all bonds single.
+        include_chirality: Whether to keep stereochemistry and isotopes. Without them, the SMILES
+            equal those of `MurckoScaffoldSmiles` with its default `includeChirality=False`.
         n_threads: The number of threads to use. Defaults to -1 (auto-detect).
 
     Returns:
@@ -421,6 +427,8 @@ def murcko_scaffolds(
     inputs: Sequence[str | None] | Sequence[Chem.Mol],
     output: Literal["mol"],
     *,
+    generic: bool = False,
+    include_chirality: bool = True,
     n_threads: int = -1,
 ) -> list[Chem.Mol | None]: ...
 @overload

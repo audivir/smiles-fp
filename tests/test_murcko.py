@@ -101,3 +101,57 @@ def test_empty_input_and_errors() -> None:
         murcko_scaffolds(["c1ccccc1"], "inchi")  # type: ignore[call-overload]
     with pytest.raises(TypeError):
         murcko_scaffolds(["c1ccccc1", 1])  # type: ignore[arg-type]
+
+
+OPTION_CASES = (
+    "c1ncccc1CCN",
+    "C[C@H]1CC[C@@H](C)CC1",
+    "[13CH3]c1ccccc1",
+    "C1[C@](Cl)(F)O1",
+    "C1[NH2+]C1",
+    "c1[nH]ccc1C",
+    "C/C=C/c1ccccc1/C=C/C",
+    "O=C1CCC(=O)N1",
+    "[H]c1ccccc1[H]",
+    "CCO",
+)
+
+
+def option_reference(smiles: str, *, generic: bool, include_chirality: bool) -> str | None:
+    """Mirrors `MakeScaffoldGeneric` and `MurckoScaffoldSmiles` of RDKit."""
+    mol: Chem.Mol = Chem.MolFromSmiles(smiles)
+    try:
+        scaffold = MurckoScaffold.GetScaffoldForMol(mol)  # type: ignore[no-untyped-call,unused-ignore]
+        if generic:
+            scaffold = MurckoScaffold.MakeScaffoldGeneric(scaffold)  # type: ignore[no-untyped-call,unused-ignore]
+    except RuntimeError:  # pragma: no cover
+        return None
+    return Chem.MolToSmiles(scaffold, isomericSmiles=include_chirality)  # type: ignore[no-any-return,unused-ignore]
+
+
+@pytest.mark.parametrize("generic", [False, True])
+@pytest.mark.parametrize("include_chirality", [False, True])
+def test_options_match_reference(generic: bool, include_chirality: bool) -> None:
+    smis = [*OPTION_CASES, *(s.split()[0] for s in read_smis()[:150])]
+    expected = [
+        None
+        if not MURCKO_WORKS
+        else option_reference(s, generic=generic, include_chirality=include_chirality)
+        for s in smis
+    ]
+    assert murcko_scaffolds(smis, generic=generic, include_chirality=include_chirality) == expected
+    mols = murcko_scaffolds(smis, "mol", generic=generic, include_chirality=include_chirality)
+    assert [smiles_of(m) for m in mols] == expected
+    parsed = [m for m in mols_from_smiles(smis) if m is not None]
+    assert murcko_scaffolds(parsed, generic=generic, include_chirality=include_chirality) == [
+        e for s, e in zip(smis, expected, strict=True) if Chem.MolFromSmiles(s) is not None
+    ]
+
+
+def test_options_change_the_result() -> None:
+    chiral = "Cc1cccc2c1OCC[C@@H]2NC(C)C1(C)CCCO1"
+    assert murcko_scaffolds([chiral]) == [expect("c1ccc2c(c1)OCC[C@@H]2NCC1CCCO1")]
+    assert murcko_scaffolds([chiral], include_chirality=False) == [
+        expect("c1ccc2c(c1)OCCC2NCC1CCCO1")
+    ]
+    assert murcko_scaffolds(["c1ncccc1C"], generic=True) == [expect("C1CCCCC1")]

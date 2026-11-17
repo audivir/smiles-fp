@@ -11,10 +11,60 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-STUBS = ROOT / "python" / "smiles_fp" / "_smiles_fp.pyi"
-INIT = ROOT / "python" / "smiles_fp" / "__init__.py"
+PACKAGE = ROOT / "python" / "smiles_fp"
+INIT = PACKAGE / "__init__.py"
+SOURCES = (PACKAGE / "_smiles_fp.pyi", PACKAGE / "helpers.py", PACKAGE / "search.py")
 OUTPUT = ROOT / "DOCS.md"
 SECTIONS = ("Args", "Returns", "Raises")
+
+# every public function belongs to exactly one block, which sets the order of the documentation.
+GROUPS: dict[str, tuple[str, list[str]]] = {
+    "Molecules and SMILES": (
+        "Conversion between SMILES and RDKit molecules, one at a time or multi-threaded.",
+        ["mol_from_smi", "get_mols", "mols_from_smiles", "mols_to_smiles"],
+    ),
+    "Cleaning": (
+        "Standardization of SMILES and molecules in one multi-threaded pass.",
+        ["clean"],
+    ),
+    "Scaffolds and tautomers": (
+        "Murcko scaffolds and tautomers, computed multi-threaded.",
+        [
+            "murcko_scaffolds",
+            "canonical_tautomers",
+            "enumerate_tautomers",
+            "score_tautomers",
+            "pick_canonical_tautomers",
+        ],
+    ),
+    "Fingerprints": (
+        "Morgan fingerprints and their binary files.",
+        [
+            "get_morgan_fps",
+            "save_morgan_fps_from_smiles",
+            "save_fingerprints",
+            "load_fingerprints",
+            "load_fingerprints_as_ndarray",
+        ],
+    ),
+    "Similarity in memory": (
+        "Tanimoto similarities of fingerprints that fit into memory.",
+        [
+            "bulk_tanimoto_parallel",
+            "bulk_tanimoto_parallel_topk",
+            "internal_tanimoto_parallel",
+            "to_matrix",
+        ],
+    ),
+    "Similarity from files": (
+        "Tanimoto similarities of fingerprint files, read with memory-mapping.",
+        ["bulk_tanimoto_mmap", "bulk_tanimoto_mmap_topk", "internal_tanimoto_mmap"],
+    ),
+    "Search": (
+        "Top-k search and chunked similarity matrices for large collections.",
+        ["similarity_search", "windowed_bulk_tanimoto"],
+    ),
+}
 
 
 def public_names() -> list[str]:
@@ -82,18 +132,36 @@ def items(lines: list[str]) -> list[tuple[str, str]]:
     return result
 
 
-def render_function(name: str, overloads: list[ast.FunctionDef]) -> str:
-    """Renders the signatures and the docstring of a function."""
-    doc = next((d for n in overloads if (d := ast.get_docstring(n))), "")
+def decorators(node: ast.FunctionDef) -> list[str]:
+    """Returns the names of the decorators, like `overload` or `deprecated`."""
+    names = []
+    for deco in node.decorator_list:
+        target = deco.func if isinstance(deco, ast.Call) else deco
+        names.append(ast.unparse(target))
+    return names
+
+
+def deprecation(nodes: list[ast.FunctionDef]) -> str:
+    """Returns the message of a `deprecated` decorator, or an empty string."""
+    for node in nodes:
+        for deco in node.decorator_list:
+            if isinstance(deco, ast.Call) and ast.unparse(deco.func) == "deprecated":
+                return str(ast.literal_eval(deco.args[0]))
+    return ""
+
+
+def render_function(name: str, nodes: list[ast.FunctionDef]) -> str:
+    """Renders the signatures and the docstring of a function.
+
+    Overloads are shown instead of the implementation, which has the docstring if they have none.
+    """
+    overloads = [n for n in nodes if "overload" in decorators(n)]
+    shown = overloads or nodes
+    doc = next((d for n in nodes if (d := ast.get_docstring(n))), "")
     text, sections = split_sections(doc)
-    out = [
-        f"### `{name}`",
-        "",
-        "```python",
-        "\n\n".join(signature(n) for n in overloads),
-        "```",
-        "",
-    ]
+    out = [f"### `{name}`", "", "```python", "\n\n".join(signature(n) for n in shown), "```", ""]
+    if message := deprecation(nodes):
+        out += [f"**Deprecated.** {message}", ""]
     out += [text, ""] if text else []
     if "Args" in sections:
         out += ["**Arguments**", ""]
@@ -106,22 +174,52 @@ def render_function(name: str, overloads: list[ast.FunctionDef]) -> str:
     return "\n".join(out)
 
 
+def collect() -> dict[str, list[ast.FunctionDef]]:
+    """Collects the public functions of all sources, with their overloads in one list."""
+    functions: dict[str, list[ast.FunctionDef]] = {}
+    for source in SOURCES:
+        for node in ast.parse(source.read_text()).body:
+            if isinstance(node, ast.FunctionDef) and not node.name.startswith("_"):
+                functions.setdefault(node.name, []).append(node)
+    return functions
+
+
+def check_groups(names: list[str]) -> None:
+    """Fails if the blocks and the public names do not match."""
+    grouped = [n for _, members in GROUPS.values() for n in members]
+    missing = sorted(set(names) - set(grouped))
+    unknown = sorted(set(grouped) - set(names))
+    duplicate = sorted({n for n in grouped if grouped.count(n) > 1})
+    if missing or unknown or duplicate:
+        raise ValueError(
+            f"Fix GROUPS in {Path(__file__).name}: no block for {missing}, "
+            f"not public {unknown}, in several blocks {duplicate}"
+        )
+
+
+def anchor(title: str) -> str:
+    """Builds the GitHub anchor of a heading."""
+    return title.lower().replace(" ", "-")
+
+
 def render() -> str:
     """Builds the whole documentation."""
-    functions: dict[str, list[ast.FunctionDef]] = {}
-    for node in ast.parse(STUBS.read_text()).body:
-        if isinstance(node, ast.FunctionDef):
-            functions.setdefault(node.name, []).append(node)
-    names = [n for n in public_names() if n in functions]
+    functions = collect()
+    names = public_names()
+    check_groups(names)
     out = [
         "# smiles-fp API",
         "",
-        "<!-- generated by scripts/gen_docs.py from the docstrings of the type stubs -->",
-        "",
-        *(f"- [`{n}`](#{n})" for n in names),
+        "<!-- generated by scripts/gen_docs.py from the docstrings, do not edit -->",
         "",
     ]
-    out += [render_function(n, functions[n]) for n in names]
+    for title, (summary, members) in GROUPS.items():
+        out += [f"- [{title}](#{anchor(title)}): {summary}"]
+        out += [f"  - [`{n}`](#{n})" for n in members]
+    out += [""]
+    for title, (summary, members) in GROUPS.items():
+        out += [f"## {title}", "", summary, ""]
+        out += [render_function(n, functions[n]) for n in members]
     return "\n".join(out).rstrip("\n") + "\n"
 
 
