@@ -92,14 +92,28 @@ bool clean_mol_inplace_raw(size_t cleaner, size_t mol_ptr);
 // it to `wrap_mols` or `free_mol_raw`.
 size_t murcko_raw(size_t mol_ptr);
 
-// Creates a tautomer enumerator with the given limits, which one thread at a time may use. The
-// caller frees it with `free_tautomerizer`.
-size_t make_tautomerizer(uint32_t max_tautomers, uint32_t max_transforms);
+// Status of `enumerate_raw` for an exception, next to the values of `TautomerEnumeratorStatus`.
+constexpr uint8_t kFailed = 255;
+
+// Creates a tautomer enumerator, which one thread at a time may use. The caller frees it with
+// `free_tautomerizer`.
+size_t make_tautomerizer(const TautomerOpts& opts);
 void free_tautomerizer(size_t tautomerizer);
 
 // Returns the canonical tautomer of a molecule as an owning `ROMol*` integer, or 0 if RDKit throws.
 // The caller passes it to `wrap_mols` or `free_mol_raw`.
 size_t tautomer_raw(size_t tautomerizer, size_t mol_ptr);
+
+// Returns copies of all tautomers of a molecule as owning `ROMol*` integers with the status of the
+// enumeration, or `kFailed` and no tautomers if RDKit throws.
+Enumerated enumerate_raw(size_t tautomerizer, size_t mol_ptr);
+
+// Returns the score of a tautomer, where RDKit throwing becomes an error.
+int32_t score_raw(size_t mol_ptr);
+
+// Returns the best tautomer of a group like `PickCanonical` as an owning `ROMol*` integer, or 0 for
+// an empty group or if RDKit throws. The group's molecules stay owned by the caller.
+size_t pick_canonical_raw(size_t tautomerizer, rust::Slice<const size_t> ptrs);
 
 // Returns the number of atoms of a molecule.
 size_t mol_num_atoms_raw(size_t mol_ptr);

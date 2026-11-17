@@ -527,23 +527,67 @@ size_t murcko_raw(size_t mol_ptr) {
   }
 }
 
-size_t make_tautomerizer(uint32_t max_tautomers, uint32_t max_transforms) {
-  auto* enumerator = new RDKit::MolStandardize::TautomerEnumerator();
-  enumerator->setMaxTautomers(max_tautomers);
-  enumerator->setMaxTransforms(max_transforms);
+using Tautomerizer = RDKit::MolStandardize::TautomerEnumerator;
+
+size_t make_tautomerizer(const TautomerOpts& opts) {
+  Tautomerizer* enumerator = opts.v1 ? RDKit::MolStandardize::getV1TautomerEnumerator()
+                                     : new Tautomerizer();
+  enumerator->setMaxTautomers(opts.max_tautomers);
+  enumerator->setMaxTransforms(opts.max_transforms);
+  enumerator->setRemoveSp3Stereo(opts.remove_sp3_stereo);
+  enumerator->setRemoveBondStereo(opts.remove_bond_stereo);
+  enumerator->setRemoveIsotopicHs(opts.remove_isotopic_hs);
+  enumerator->setReassignStereo(opts.reassign_stereo);
   return reinterpret_cast<size_t>(enumerator);
 }
 
-void free_tautomerizer(size_t tautomerizer) {
-  delete reinterpret_cast<RDKit::MolStandardize::TautomerEnumerator*>(tautomerizer);
-}
+void free_tautomerizer(size_t tautomerizer) { delete reinterpret_cast<Tautomerizer*>(tautomerizer); }
 
 size_t tautomer_raw(size_t tautomerizer, size_t mol_ptr) {
   try {
-    const auto* enumerator = reinterpret_cast<RDKit::MolStandardize::TautomerEnumerator*>(tautomerizer);
+    const auto* enumerator = reinterpret_cast<Tautomerizer*>(tautomerizer);
     const auto* mol = reinterpret_cast<const RDKit::ROMol*>(mol_ptr);
     std::unique_ptr<RDKit::ROMol> tautomer(enumerator->canonicalize(*mol));
     return reinterpret_cast<size_t>(tautomer.release());
+  } catch (...) {
+    return 0;
+  }
+}
+
+Enumerated enumerate_raw(size_t tautomerizer, size_t mol_ptr) {
+  Enumerated out;
+  out.status = kFailed;
+  try {
+    const auto* enumerator = reinterpret_cast<Tautomerizer*>(tautomerizer);
+    const auto* mol = reinterpret_cast<const RDKit::ROMol*>(mol_ptr);
+    const auto result = enumerator->enumerate(*mol);
+    for (const auto& tautomer : result) {
+      out.ptrs.push_back(reinterpret_cast<size_t>(new RDKit::ROMol(*tautomer)));
+    }
+    out.status = static_cast<uint8_t>(result.status());
+  } catch (...) {
+    for (const size_t ptr : out.ptrs) delete reinterpret_cast<RDKit::ROMol*>(ptr);
+    out.ptrs.clear();
+    out.status = kFailed;
+  }
+  return out;
+}
+
+int32_t score_raw(size_t mol_ptr) {
+  return RDKit::MolStandardize::TautomerScoringFunctions::scoreTautomer(
+      *reinterpret_cast<const RDKit::ROMol*>(mol_ptr));
+}
+
+size_t pick_canonical_raw(size_t tautomerizer, rust::Slice<const size_t> ptrs) {
+  if (ptrs.empty()) return 0;
+  try {
+    const auto* enumerator = reinterpret_cast<Tautomerizer*>(tautomerizer);
+    // views without ownership, as the caller frees the molecules.
+    std::vector<RDKit::ROMOL_SPTR> group;
+    for (const size_t ptr : ptrs) {
+      group.emplace_back(reinterpret_cast<RDKit::ROMol*>(ptr), [](RDKit::ROMol*) {});
+    }
+    return reinterpret_cast<size_t>(enumerator->pickCanonical(group));
   } catch (...) {
     return 0;
   }

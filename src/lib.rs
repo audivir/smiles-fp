@@ -46,6 +46,21 @@ mod ffi {
         mol: usize,
     }
 
+    struct TautomerOpts {
+        max_tautomers: u32,
+        max_transforms: u32,
+        remove_sp3_stereo: bool,
+        remove_bond_stereo: bool,
+        remove_isotopic_hs: bool,
+        reassign_stereo: bool,
+        v1: bool,
+    }
+
+    struct Enumerated {
+        ptrs: Vec<usize>,
+        status: u8,
+    }
+
     struct MolPtrs {
         keepalive: usize,
         ptrs: Vec<usize>,
@@ -77,9 +92,12 @@ mod ffi {
         fn free_cleaner(cleaner: usize);
         fn clean_mol_inplace_raw(cleaner: usize, mol_ptr: usize) -> bool;
         fn murcko_raw(mol_ptr: usize) -> usize;
-        fn make_tautomerizer(max_tautomers: u32, max_transforms: u32) -> usize;
+        fn make_tautomerizer(opts: &TautomerOpts) -> usize;
         fn free_tautomerizer(tautomerizer: usize);
         fn tautomer_raw(tautomerizer: usize, mol_ptr: usize) -> usize;
+        fn enumerate_raw(tautomerizer: usize, mol_ptr: usize) -> Enumerated;
+        fn score_raw(mol_ptr: usize) -> Result<i32>;
+        fn pick_canonical_raw(tautomerizer: usize, ptrs: &[usize]) -> usize;
         fn mol_num_atoms_raw(mol_ptr: usize) -> usize;
         fn clone_rwmol_raw(mol_ptr: usize) -> Result<usize>;
         fn clean_mol_raw(cleaner: usize, mol_ptr: usize, want_smiles: bool) -> Cleaned;
@@ -115,6 +133,9 @@ fn _smiles_fp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(clean::clean, m)?)?;
     m.add_function(wrap_pyfunction!(murcko::murcko_scaffolds, m)?)?;
     m.add_function(wrap_pyfunction!(tautomers::canonical_tautomers, m)?)?;
+    m.add_function(wrap_pyfunction!(tautomers::enumerate_tautomers, m)?)?;
+    m.add_function(wrap_pyfunction!(tautomers::score_tautomers, m)?)?;
+    m.add_function(wrap_pyfunction!(tautomers::pick_canonical_tautomers, m)?)?;
     m.add_function(wrap_pyfunction!(fps::save_morgan_fps_from_smiles, m)?)?;
     m.add_function(wrap_pyfunction!(similarity::bulk_tanimoto_parallel, m)?)?;
     m.add_function(wrap_pyfunction!(

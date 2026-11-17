@@ -385,6 +385,11 @@ def clean(
     inplace: Literal[True],
     n_threads: int = -1,
 ) -> list[bool]: ...
+
+TautomerStatus: TypeAlias = Literal[
+    "completed", "max_tautomers_reached", "max_transforms_reached", "canceled"
+]
+
 @overload
 def murcko_scaffolds(
     inputs: Sequence[str | None] | Sequence[Chem.Mol],
@@ -423,20 +428,32 @@ def canonical_tautomers(
     inputs: Sequence[str | None] | Sequence[Chem.Mol],
     output: Literal["smiles"] = "smiles",
     *,
-    max_tautomers: int = 10_000,
-    max_transforms: int = 10_000,
+    max_tautomers: int = 1000,
+    max_transforms: int = 1000,
+    remove_sp3_stereo: bool = True,
+    remove_bond_stereo: bool = True,
+    remove_isotopic_hs: bool = True,
+    reassign_stereo: bool = True,
+    v1: bool = False,
     n_threads: int = -1,
 ) -> list[str | None]:
     """Canonicalizes tautomers multi-threaded like `TautomerEnumerator.Canonicalize`.
 
     Releases the GIL and creates no Python objects until the end. Each thread has its own
-    enumerator. Molecules are copied first and stay unchanged.
+    enumerator. Molecules are copied first and stay unchanged. The defaults are those of RDKit.
 
     Args:
         inputs: SMILES strings, where None and empty strings are invalid, or molecules.
-        output: Whether to return canonical SMILES or tautomer molecules.
+        output: Whether to return SMILES or molecules.
         max_tautomers: The maximum number of tautomers to enumerate per molecule.
         max_transforms: The maximum number of transformations to apply per molecule.
+        remove_sp3_stereo: Whether to remove stereochemistry of sp3 atoms that tautomerization
+            can change.
+        remove_bond_stereo: Whether to remove stereochemistry of bonds that tautomerization can
+            change.
+        remove_isotopic_hs: Whether to remove isotopic hydrogens that tautomerization can move.
+        reassign_stereo: Whether to assign the stereochemistry again after tautomerization.
+        v1: Whether to use the transformations of the older `GetV1TautomerEnumerator`.
         n_threads: The number of threads to use. Defaults to -1 (auto-detect).
 
     Returns:
@@ -453,7 +470,122 @@ def canonical_tautomers(
     inputs: Sequence[str | None] | Sequence[Chem.Mol],
     output: Literal["mol"],
     *,
-    max_tautomers: int = 10_000,
-    max_transforms: int = 10_000,
+    max_tautomers: int = 1000,
+    max_transforms: int = 1000,
+    remove_sp3_stereo: bool = True,
+    remove_bond_stereo: bool = True,
+    remove_isotopic_hs: bool = True,
+    reassign_stereo: bool = True,
+    v1: bool = False,
+    n_threads: int = -1,
+) -> list[Chem.Mol | None]: ...
+@overload
+def enumerate_tautomers(
+    inputs: Sequence[str | None] | Sequence[Chem.Mol],
+    output: Literal["smiles"] = "smiles",
+    *,
+    max_tautomers: int = 1000,
+    max_transforms: int = 1000,
+    remove_sp3_stereo: bool = True,
+    remove_bond_stereo: bool = True,
+    remove_isotopic_hs: bool = True,
+    reassign_stereo: bool = True,
+    v1: bool = False,
+    n_threads: int = -1,
+) -> list[tuple[list[str], TautomerStatus] | None]:
+    """Enumerates all tautomers multi-threaded like `TautomerEnumerator.Enumerate`.
+
+    Releases the GIL and creates no Python objects until the end. Each thread has its own
+    enumerator. Molecules are copied first and stay unchanged.
+
+    Args:
+        inputs: SMILES strings, where None and empty strings are invalid, or molecules.
+        output: Whether to return SMILES or molecules.
+        max_tautomers: The maximum number of tautomers to enumerate per molecule.
+        max_transforms: The maximum number of transformations to apply per molecule.
+        remove_sp3_stereo: Whether to remove stereochemistry of sp3 atoms that tautomerization
+            can change.
+        remove_bond_stereo: Whether to remove stereochemistry of bonds that tautomerization can
+            change.
+        remove_isotopic_hs: Whether to remove isotopic hydrogens that tautomerization can move.
+        reassign_stereo: Whether to assign the stereochemistry again after tautomerization.
+        v1: Whether to use the transformations of the older `GetV1TautomerEnumerator`.
+        n_threads: The number of threads to use. Defaults to -1 (auto-detect).
+
+    Returns:
+        A list with one tuple per input of its tautomers, sorted by SMILES, and the status of the
+        enumeration, which tells whether a limit stopped it. None where it is invalid or RDKit
+        fails.
+
+    Raises:
+        TypeError: If the items are neither all SMILES nor all molecules.
+        ValueError: If `output` is unknown.
+    """
+
+@overload
+def enumerate_tautomers(
+    inputs: Sequence[str | None] | Sequence[Chem.Mol],
+    output: Literal["mol"],
+    *,
+    max_tautomers: int = 1000,
+    max_transforms: int = 1000,
+    remove_sp3_stereo: bool = True,
+    remove_bond_stereo: bool = True,
+    remove_isotopic_hs: bool = True,
+    reassign_stereo: bool = True,
+    v1: bool = False,
+    n_threads: int = -1,
+) -> list[tuple[list[Chem.Mol], TautomerStatus] | None]: ...
+def score_tautomers(
+    inputs: Sequence[str | None] | Sequence[Chem.Mol], *, n_threads: int = -1
+) -> list[int | None]:
+    """Scores tautomers multi-threaded like `TautomerEnumerator.ScoreTautomer`.
+
+    Releases the GIL and creates no Python objects until the end. Molecules are copied first and
+    stay unchanged.
+
+    Args:
+        inputs: SMILES strings, where None and empty strings are invalid, or molecules.
+        n_threads: The number of threads to use. Defaults to -1 (auto-detect).
+
+    Returns:
+        A list with the score per input, where higher is better, or None where it is invalid or
+        RDKit fails.
+
+    Raises:
+        TypeError: If the items are neither all SMILES nor all molecules.
+    """
+
+@overload
+def pick_canonical_tautomers(
+    groups: Sequence[Sequence[str | None]] | Sequence[Sequence[Chem.Mol]],
+    output: Literal["smiles"] = "smiles",
+    *,
+    n_threads: int = -1,
+) -> list[str | None]:
+    """Picks the best tautomer of each group multi-threaded like `PickCanonical`.
+
+    Releases the GIL and creates no Python objects until the end. Molecules are copied first and
+    stay unchanged.
+
+    Args:
+        groups: Groups of tautomers as SMILES strings or molecules.
+        output: Whether to return SMILES or molecules.
+        n_threads: The number of threads to use. Defaults to -1 (auto-detect).
+
+    Returns:
+        A list with the best tautomer per group, or None where the group is empty, has an invalid
+        item, or RDKit fails.
+
+    Raises:
+        TypeError: If the items are neither all SMILES nor all molecules.
+        ValueError: If `output` is unknown.
+    """
+
+@overload
+def pick_canonical_tautomers(
+    groups: Sequence[Sequence[str | None]] | Sequence[Sequence[Chem.Mol]],
+    output: Literal["mol"],
+    *,
     n_threads: int = -1,
 ) -> list[Chem.Mol | None]: ...
