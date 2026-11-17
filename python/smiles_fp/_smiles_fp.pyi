@@ -306,6 +306,7 @@ def clean(
     inputs: Sequence[str | None] | Sequence[Chem.Mol],
     output: Literal["smiles"] = "smiles",
     *,
+    largest_fragment: bool = False,
     no_salts: bool = False,
     no_isotopes: bool = False,
     no_stereo: bool = False,
@@ -327,6 +328,8 @@ def clean(
         inputs: SMILES strings, where None and empty strings are invalid, or molecules.
         output: Whether to return canonical SMILES or molecules. For SMILES inputs the molecules
             are parsed from the written SMILES.
+        largest_fragment: Whether to keep only the largest fragment, like `LargestFragmentChooser`.
+            Runs before hydrogens and salts are removed.
         no_salts: Whether to remove salts with the default patterns of `SaltRemover`.
         no_isotopes: Whether to remove isotopes. Implied if `isomeric` is False.
         no_stereo: Whether to remove stereochemistry. Implied if `isomeric` is False.
@@ -356,6 +359,7 @@ def clean(
     inputs: Sequence[str | None] | Sequence[Chem.Mol],
     output: Literal["mol"],
     *,
+    largest_fragment: bool = False,
     no_salts: bool = False,
     no_isotopes: bool = False,
     no_stereo: bool = False,
@@ -371,6 +375,7 @@ def clean(
     inputs: Sequence[Chem.Mol],
     output: Literal["mol"] = "mol",
     *,
+    largest_fragment: bool = False,
     no_salts: bool = False,
     no_isotopes: bool = False,
     no_stereo: bool = False,
@@ -380,3 +385,36 @@ def clean(
     inplace: Literal[True],
     n_threads: int = -1,
 ) -> list[bool]: ...
+@overload
+def murcko_scaffolds(
+    inputs: Sequence[str | None] | Sequence[Chem.Mol],
+    output: Literal["smiles"] = "smiles",
+    *,
+    n_threads: int = -1,
+) -> list[str | None]:
+    """Computes Murcko scaffolds multi-threaded like `MurckoScaffold.GetScaffoldForMol`.
+
+    Releases the GIL and creates no Python objects until the end. Molecules are copied first and
+    stay unchanged.
+
+    Args:
+        inputs: SMILES strings, where None and empty strings are invalid, or molecules.
+        output: Whether to return canonical SMILES or scaffold molecules.
+        n_threads: The number of threads to use. Defaults to -1 (auto-detect).
+
+    Returns:
+        A list with one scaffold per input, or None where it is invalid or RDKit fails. The
+        scaffold of a molecule without rings is empty (an empty string or a molecule without atoms).
+
+    Raises:
+        TypeError: If the items are neither all SMILES nor all molecules.
+        ValueError: If `output` is unknown.
+    """
+
+@overload
+def murcko_scaffolds(
+    inputs: Sequence[str | None] | Sequence[Chem.Mol],
+    output: Literal["mol"],
+    *,
+    n_threads: int = -1,
+) -> list[Chem.Mol | None]: ...

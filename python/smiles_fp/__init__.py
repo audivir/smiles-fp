@@ -18,6 +18,7 @@ from smiles_fp._smiles_fp import (
     internal_tanimoto_parallel,
     mols_from_smiles,
     mols_to_smiles,
+    murcko_scaffolds,
     save_morgan_fps_from_smiles,
 )
 from smiles_fp.helpers import (  # type: ignore[deprecated]
@@ -46,6 +47,7 @@ __all__ = [
     "mol_from_smi",
     "mols_from_smiles",
     "mols_to_smiles",
+    "murcko_scaffolds",
     "save_fingerprints",
     "save_morgan_fps_from_smiles",
     "similarity_search",

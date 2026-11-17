@@ -8,7 +8,7 @@ from typing import Literal, TypedDict
 import pytest
 from conftest import read_smis
 from rdkit import Chem, rdBase
-from rdkit.Chem.MolStandardize.rdMolStandardize import Uncharger
+from rdkit.Chem.MolStandardize.rdMolStandardize import LargestFragmentChooser, Uncharger
 from rdkit.Chem.SaltRemover import SaltRemover
 from smiles_fp import clean, mols_from_smiles
 
@@ -36,10 +36,11 @@ EDGE_CASES = (
     "CCO.CCO",
 )
 SUFFIXES = ("", ".Cl", ".[Na+].[Cl-]")
-FLAGS = ("no_salts", "no_isotopes", "no_stereo", "isomeric", "neutralize")
+FLAGS = ("largest_fragment", "no_salts", "no_isotopes", "no_stereo", "isomeric", "neutralize")
 
 
 class Flags(TypedDict):
+    largest_fragment: bool
     no_salts: bool
     no_isotopes: bool
     no_stereo: bool
@@ -67,8 +68,13 @@ def mol_flags(flags: Flags) -> Flags:
     }
 
 
-def clean_mol_reference(mol: Chem.Mol, allowed: set[int] | None, flags: Flags) -> Chem.Mol | None:
-    """Mirrors the steps of the pipeline, treating an RDKit exception as an invalid input."""
+def prepare_reference(mol: Chem.Mol, flags: Flags) -> Chem.Mol | None:
+    """Mirrors the first steps, treating an RDKit exception as an invalid input."""
+    if flags["largest_fragment"]:
+        try:
+            mol = LargestFragmentChooser().choose(mol)
+        except ValueError:  # pragma: no cover
+            return None
     mol = Chem.RemoveAllHs(mol)
     if mol.GetNumAtoms() == 0:
         return None
@@ -77,10 +83,15 @@ def clean_mol_reference(mol: Chem.Mol, allowed: set[int] | None, flags: Flags) -
             mol = SaltRemover().StripMol(mol)  # type: ignore[no-untyped-call]
         except ValueError:  # pragma: no cover
             return None
-        if mol.GetNumAtoms() == 0:
-            return None
-    if flags["neutralize"]:
-        mol = Uncharger().uncharge(mol)
+    return None if mol.GetNumAtoms() == 0 else mol
+
+
+def clean_mol_reference(mol: Chem.Mol, allowed: set[int] | None, flags: Flags) -> Chem.Mol | None:
+    """Mirrors the steps of the pipeline."""
+    prepared = prepare_reference(mol, flags)
+    if prepared is None:
+        return None
+    mol = Uncharger().uncharge(prepared) if flags["neutralize"] else prepared
     atoms = mol.GetAtoms()  # type: ignore[no-untyped-call,unused-ignore]
     if flags["no_isotopes"]:
         for atom in atoms:

@@ -6,6 +6,7 @@
 #include <GraphMol/Fingerprints/MorganGenerator.h>
 #include <GraphMol/MolOps.h>
 #include <GraphMol/MolStandardize/Charge.h>
+#include <GraphMol/MolStandardize/Fragment.h>
 #include <GraphMol/ROMol.h>
 #include <GraphMol/RWMol.h>
 #include <GraphMol/SmilesParse/SmilesParse.h>
@@ -392,6 +393,7 @@ struct Cleaner {
   std::bitset<256> allowed;  // empty means every element is allowed.
   SaltStripper salts;
   RDKit::MolStandardize::Uncharger uncharger;
+  RDKit::MolStandardize::LargestFragmentChooser chooser;
 };
 
 size_t make_cleaner(const CleanOpts& opts, rust::Slice<const uint32_t> allowed,
@@ -415,6 +417,10 @@ void free_cleaner(size_t cleaner) {
 // cleans `mol` in place and returns whether it is still valid.
 static bool clean_mol(Cleaner& c, std::unique_ptr<RDKit::RWMol>& mol) {
   if (mol->getNumAtoms() == 0) return false;
+  if (c.opts.largest_fragment) {
+    std::unique_ptr<RDKit::ROMol> chosen(c.chooser.choose(*mol));
+    mol = std::make_unique<RDKit::RWMol>(*chosen);
+  }
   RDKit::MolOps::removeAllHs(*mol);
   if (mol->getNumAtoms() == 0) return false;
   if (c.opts.no_salts) {
@@ -503,5 +509,19 @@ bool clean_mol_inplace_raw(size_t cleaner, size_t mol_ptr) {
     return true;
   } catch (...) {
     return false;
+  }
+}
+
+size_t murcko_raw(size_t mol_ptr) {
+  try {
+    const auto* mol = reinterpret_cast<const RDKit::ROMol*>(mol_ptr);
+    std::unique_ptr<RDKit::ROMol> scaffold(RDKit::MurckoDecompose(*mol));
+    // the same finishing steps as `GetScaffoldForMol` in Python.
+    scaffold->clearComputedProps();
+    scaffold->updatePropertyCache();
+    RDKit::MolOps::symmetrizeSSSR(*scaffold);
+    return reinterpret_cast<size_t>(scaffold.release());
+  } catch (...) {
+    return 0;
   }
 }

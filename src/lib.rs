@@ -7,6 +7,7 @@ use pyo3::{
 mod clean;
 mod fps;
 mod mols;
+mod murcko;
 mod pool;
 mod salt_remover;
 mod similarity;
@@ -28,6 +29,7 @@ mod ffi {
     /// Container for the flags of the cleaning pipeline.
     #[derive(Clone, Copy)]
     struct CleanOpts {
+        largest_fragment: bool,
         no_salts: bool,
         no_isotopes: bool,
         no_stereo: bool,
@@ -72,6 +74,7 @@ mod ffi {
         fn make_cleaner(opts: &CleanOpts, allowed: &[u32], salt_lines: &str) -> Result<usize>;
         fn free_cleaner(cleaner: usize);
         fn clean_mol_inplace_raw(cleaner: usize, mol_ptr: usize) -> bool;
+        fn murcko_raw(mol_ptr: usize) -> usize;
         fn clone_rwmol_raw(mol_ptr: usize) -> Result<usize>;
         fn clean_mol_raw(cleaner: usize, mol_ptr: usize, want_smiles: bool) -> Cleaned;
         fn clean_smiles_raw(cleaner: usize, smiles: &str, want_mol: bool) -> Cleaned;
@@ -104,6 +107,7 @@ fn _smiles_fp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(mols::mols_to_smiles, m)?)?;
     m.add_function(wrap_pyfunction!(salt_remover::strip_salts, m)?)?;
     m.add_function(wrap_pyfunction!(clean::clean, m)?)?;
+    m.add_function(wrap_pyfunction!(murcko::murcko_scaffolds, m)?)?;
     m.add_function(wrap_pyfunction!(fps::save_morgan_fps_from_smiles, m)?)?;
     m.add_function(wrap_pyfunction!(similarity::bulk_tanimoto_parallel, m)?)?;
     m.add_function(wrap_pyfunction!(

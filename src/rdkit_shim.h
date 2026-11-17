@@ -85,3 +85,9 @@ Cleaned clean_mol_raw(size_t cleaner, size_t mol_ptr, bool want_smiles);
 // molecule stays unchanged. Requires exclusive access to the molecule, and its Python object stays
 // valid with the cleaned content.
 bool clean_mol_inplace_raw(size_t cleaner, size_t mol_ptr);
+
+// Returns the Murcko scaffold of a molecule like `GetScaffoldForMol` in Python without touching the
+// Python API, so it is thread-safe on distinct molecules. The scaffold is empty for a molecule
+// without rings. Returns an owning `ROMol*` as an integer, or 0 if RDKit throws. The caller passes
+// it to `wrap_mols` or `free_mol_raw`.
+size_t murcko_raw(size_t mol_ptr);

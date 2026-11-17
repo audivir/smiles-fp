@@ -159,6 +159,16 @@ fn clean_inplace<'py>(
     Ok(PyList::new(py, slots.iter().map(|&s| valid[s]))?.into_any())
 }
 
+/// Tells whether the inputs are SMILES (also if they start with `None`) or molecules, judging by
+/// the first item, or returns `None` for no items.
+pub(crate) fn is_smiles_input(inputs: &Bound<'_, PySequence>) -> PyResult<Option<bool>> {
+    if inputs.len()? == 0 {
+        return Ok(None);
+    }
+    let first = inputs.get_item(0)?;
+    Ok(Some(first.is_none() || first.is_instance_of::<PyString>()))
+}
+
 /// Cleans SMILES or molecules on real threads.
 ///
 /// SMILES and copies of molecules are cleaned with the GIL released, molecules in place with the
@@ -170,6 +180,7 @@ fn clean_inplace<'py>(
     inputs,
     output=None,
     *,
+    largest_fragment=false,
     no_salts=false,
     no_isotopes=false,
     no_stereo=false,
@@ -185,6 +196,7 @@ pub fn clean<'py>(
     py: Python<'py>,
     inputs: &Bound<'py, PySequence>,
     output: Option<&str>,
+    largest_fragment: bool,
     no_salts: bool,
     no_isotopes: bool,
     no_stereo: bool,
@@ -217,6 +229,7 @@ pub fn clean<'py>(
     };
     let job = Job {
         opts: ffi::CleanOpts {
+            largest_fragment,
             no_salts,
             no_isotopes,
             no_stereo,
@@ -231,12 +244,8 @@ pub fn clean<'py>(
     job.cleaner().map_err(PyRuntimeError::new_err)?;
     let pool = setup_local_pool(n_threads).map_err(PyRuntimeError::new_err)?;
 
-    let is_smiles = match inputs.len()? {
-        0 => return Ok(PyList::empty(py).into_any()),
-        _ => {
-            let first = inputs.get_item(0)?;
-            first.is_none() || first.is_instance_of::<PyString>()
-        }
+    let Some(is_smiles) = is_smiles_input(inputs)? else {
+        return Ok(PyList::empty(py).into_any());
     };
     match (is_smiles, inplace) {
         (true, false) => clean_smiles(py, &pool, &job, inputs),
