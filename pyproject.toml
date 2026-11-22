@@ -143,6 +143,9 @@ ban-relative-imports = "all"
 # standalone scripts are not part of a package.
 "scripts/*.py" = ["INP001"]
 
+# dropin/smiles_fp.py is a single file to copy, and its signatures mirror the compiled package.
+"dropin/*.py" = ["INP001", "PLR0913", "PLR0917"]
+
 # conf.py automatically created by Sphinx
 "docs/conf.py" = ["INP001", "D100", "ERA001", "A"]
 

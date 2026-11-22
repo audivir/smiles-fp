@@ -62,3 +62,5 @@ jobs:
       - run: uv run coverage run -m pytest --benchmark-skip
       - run: uv run coverage combine || true
       - run: uv run coverage report
+      - name: Run the tests against the pure-Python dropin
+        run: SMILES_FP_DROPIN=1 uv run pytest --benchmark-skip -p no:cacheprovider
