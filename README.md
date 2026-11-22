@@ -46,6 +46,16 @@ save_fingerprints(db_fps, "db.fp")
 results = similarity_search(query_ids, "query.fp", db_ids, "db.fp", k=5)
 ```
 
+Or with progress bar:
+
+```python
+mols = get_mols(smiles, verbose=True)
+# Parsing SMILES:  42%|████▏     | 42000/100000 [00:01<00:01, 38000mol/s]
+```
+
+After an interrupt, results are discarded, but `clean(..., inplace=True)`
+keeps the molecules it already cleaned.
+
 All functions are described in [DOCS.md](DOCS.md).
 
 ## License
