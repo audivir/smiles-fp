@@ -16,7 +16,7 @@ DROPIN = Path(__file__).parents[1] / "dropin" / "smiles_fp.py"
 # these test the compiled package itself: its generated docs and its handling of interrupts.
 COMPILED_ONLY = ("test_docs.py", "test_interrupt.py")
 
-if os.environ.get("SMILES_FP_DROPIN"):
+if os.environ.get("SMILES_FP_DROPIN"):  # pragma: no cover
     # runs the tests against the pure-Python dropin, which must give the same results.
     spec = importlib.util.spec_from_file_location("smiles_fp", DROPIN)
     assert spec is not None
