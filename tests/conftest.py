@@ -2,16 +2,34 @@
 
 from __future__ import annotations
 
+import importlib.util
+import os
+import sys
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
-from smiles_fp import get_mols, get_morgan_fps
+
+DROPIN = Path(__file__).parents[1] / "dropin" / "smiles_fp.py"
+# these test the compiled package itself: its generated docs and its handling of interrupts.
+COMPILED_ONLY = ("test_docs.py", "test_interrupt.py")
+
+if os.environ.get("SMILES_FP_DROPIN"):
+    # runs the tests against the pure-Python dropin, which must give the same results.
+    spec = importlib.util.spec_from_file_location("smiles_fp", DROPIN)
+    assert spec is not None
+    assert spec.loader is not None
+    dropin = importlib.util.module_from_spec(spec)
+    sys.modules["smiles_fp"] = dropin
+    spec.loader.exec_module(dropin)
+    collect_ignore = list(COMPILED_ONLY)
+
+from smiles_fp import get_mols, get_morgan_fps  # noqa: E402
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Generator, Sequence
 
     from numpy.typing import NDArray
     from rdkit import Chem
@@ -30,6 +48,15 @@ TEST_SMILES_PATH = FIXTURES / "test.smiles"
 
 if max(*TEST_SIZES, *BENCHMARK_SIZES) > N_SMILES:  # pragma: no cover
     raise ValueError("More SMILES requested for benchmark than processed")
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:  # noqa: ARG001  # pragma: no cover
+    """Skips what the dropin cannot do, e.g. settings that this RDKit hides from Python."""
+    try:
+        return (yield)
+    except NotImplementedError as e:
+        pytest.skip(str(e))
 
 
 def zero_array(dims: int, value: int = 0) -> NDArray[np.float64]:
