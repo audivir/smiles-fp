@@ -100,9 +100,7 @@ def _want_mol(output: str) -> bool:
     return output == "mol"
 
 
-# ---------------------------------------------------------------------------------------------
 # molecules
-# ---------------------------------------------------------------------------------------------
 
 
 def mol_from_smi(smi: str) -> Chem.Mol:
@@ -255,9 +253,7 @@ def mols_to_smiles(
     return smiles
 
 
-# ---------------------------------------------------------------------------------------------
 # cleaning, scaffolds and tautomers
-# ---------------------------------------------------------------------------------------------
 
 # the inputs of a batch: SMILES (None for invalid ones) or molecules.
 Inputs: TypeAlias = "list[str | None] | list[Chem.Mol]"
@@ -856,9 +852,7 @@ def pick_canonical_tautomers(
     ]
 
 
-# ---------------------------------------------------------------------------------------------
 # fingerprint files and arrays
-# ---------------------------------------------------------------------------------------------
 
 
 def _n_blocks(n_bits: int) -> int:
@@ -1182,9 +1176,7 @@ def save_morgan_fps_from_smiles(
     _write_blocks(filename, blocks, len(fps), bits)
 
 
-# ---------------------------------------------------------------------------------------------
 # similarity
-# ---------------------------------------------------------------------------------------------
 
 _POPCOUNT = np.array([i.bit_count() for i in range(256)], dtype=np.uint8)
 
@@ -1564,9 +1556,7 @@ def similarity_search(
     return results
 
 
-# ---------------------------------------------------------------------------------------------
 # the submodules of the package
-# ---------------------------------------------------------------------------------------------
 
 
 def _alias(name: str, members: dict[str, Any]) -> None:
