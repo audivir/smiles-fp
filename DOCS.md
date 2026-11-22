@@ -78,7 +78,7 @@ Converts a batch of SMILES to RDKit molecules, fails on any invalid SMILES.
 
 - `smis`: Iterable of SMILES strings to convert.
 - `n_jobs`: Number of threads, where -1 detects the count automatically.
-- `verbose`: Ignored.
+- `verbose`: Whether to show a progress bar with ETA.
 - `sanitize`: Whether to sanitize and remove Hs.
 
 **Returns**
@@ -97,6 +97,7 @@ def mols_from_smiles(
     sanitize: bool = True,
     *,
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> list[Chem.Mol | None]
 ```
 
@@ -107,6 +108,7 @@ Parses SMILES to RDKit molecules multi-threaded.
 - `smiles`: Sequence of SMILES strings to parse.
 - `sanitize`: Whether to sanitize and remove Hs.
 - `n_threads`: The number of threads to use, where -1 detects the count automatically.
+- `verbose`: Whether to show a progress bar with ETA while processing.
 
 **Returns**
 
@@ -126,6 +128,7 @@ def mols_to_smiles(
     *,
     ignore_atom_map_numbers: bool = False,
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> list[str]
 ```
 
@@ -150,6 +153,7 @@ and re-written at each position.
 - `all_hs_explicit`: Write the H count of every atom.
 - `ignore_atom_map_numbers`: Ignore atom map numbers when canonicalizing.
 - `n_threads`: The number of threads to use, where -1 detects the count automatically.
+- `verbose`: Whether to show a progress bar with ETA while processing.
 
 **Returns**
 
@@ -182,6 +186,7 @@ def clean(
     verify: bool = True,
     inplace: Literal[False] = False,
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> list[str | None]
 
 def clean(
@@ -198,6 +203,7 @@ def clean(
     verify: bool = True,
     inplace: Literal[False] = False,
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> list[Chem.Mol | None]
 
 def clean(
@@ -213,6 +219,7 @@ def clean(
     neutralize: bool = False,
     inplace: Literal[True],
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> list[bool]
 ```
 
@@ -237,6 +244,7 @@ no Python objects until the end.
 - `verify`: Whether to parse the written SMILES again as a check. Skipping it saves a third of the time. Has no effect with `output="mol"` for SMILES, which are parsed anyway.
 - `inplace`: Whether to clean molecules in place instead of copying them. Holds the GIL, so other Python threads cannot use the molecules, and the molecules must not be used by a GIL-released RDKit function in another thread. An invalid molecule stays unchanged.
 - `n_threads`: The number of threads to use, where -1 detects the count automatically.
+- `verbose`: Whether to show a progress bar with ETA while processing.
 
 **Returns**
 
@@ -261,6 +269,7 @@ def murcko_scaffolds(
     generic: bool = False,
     include_chirality: bool = True,
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> list[str | None]
 
 def murcko_scaffolds(
@@ -270,6 +279,7 @@ def murcko_scaffolds(
     generic: bool = False,
     include_chirality: bool = True,
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> list[Chem.Mol | None]
 ```
 
@@ -285,6 +295,7 @@ stay unchanged.
 - `generic`: Whether to make the scaffold generic like `MakeScaffoldGeneric`, where all atoms become carbon and all bonds single.
 - `include_chirality`: Whether to keep stereochemistry and isotopes. Without them, the SMILES equal those of `MurckoScaffoldSmiles` with its default `includeChirality=False`.
 - `n_threads`: The number of threads to use, where -1 detects the count automatically.
+- `verbose`: Whether to show a progress bar with ETA while processing.
 
 **Returns**
 
@@ -310,6 +321,7 @@ def canonical_tautomers(
     reassign_stereo: bool = True,
     v1: bool = False,
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> list[str | None]
 
 def canonical_tautomers(
@@ -324,6 +336,7 @@ def canonical_tautomers(
     reassign_stereo: bool = True,
     v1: bool = False,
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> list[Chem.Mol | None]
 ```
 
@@ -344,6 +357,7 @@ enumerator. Molecules are copied first and stay unchanged. The defaults are thos
 - `reassign_stereo`: Whether to assign the stereochemistry again after tautomerization.
 - `v1`: Whether to use the transformations of the older `GetV1TautomerEnumerator`.
 - `n_threads`: The number of threads to use, where -1 detects the count automatically.
+- `verbose`: Whether to show a progress bar with ETA while processing.
 
 **Returns**
 
@@ -369,6 +383,7 @@ def enumerate_tautomers(
     reassign_stereo: bool = True,
     v1: bool = False,
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> list[tuple[list[str], TautomerStatus] | None]
 
 def enumerate_tautomers(
@@ -383,6 +398,7 @@ def enumerate_tautomers(
     reassign_stereo: bool = True,
     v1: bool = False,
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> list[tuple[list[Chem.Mol], TautomerStatus] | None]
 ```
 
@@ -403,6 +419,7 @@ enumerator. Molecules are copied first and stay unchanged.
 - `reassign_stereo`: Whether to assign the stereochemistry again after tautomerization.
 - `v1`: Whether to use the transformations of the older `GetV1TautomerEnumerator`.
 - `n_threads`: The number of threads to use, where -1 detects the count automatically.
+- `verbose`: Whether to show a progress bar with ETA while processing.
 
 **Returns**
 
@@ -420,6 +437,7 @@ def score_tautomers(
     inputs: Sequence[str | None] | Sequence[Chem.Mol],
     *,
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> list[int | None]
 ```
 
@@ -432,6 +450,7 @@ stay unchanged.
 
 - `inputs`: SMILES strings, where None and empty strings are invalid, or molecules.
 - `n_threads`: The number of threads to use, where -1 detects the count automatically.
+- `verbose`: Whether to show a progress bar with ETA while processing.
 
 **Returns**
 
@@ -449,6 +468,7 @@ def pick_canonical_tautomers(
     output: Literal["smiles"] = "smiles",
     *,
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> list[str | None]
 
 def pick_canonical_tautomers(
@@ -456,6 +476,7 @@ def pick_canonical_tautomers(
     output: Literal["mol"],
     *,
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> list[Chem.Mol | None]
 ```
 
@@ -469,6 +490,7 @@ stay unchanged.
 - `groups`: Groups of tautomers as SMILES strings or molecules.
 - `output`: Whether to return SMILES or molecules.
 - `n_threads`: The number of threads to use, where -1 detects the count automatically.
+- `verbose`: Whether to show a progress bar with ETA while processing.
 
 **Returns**
 
@@ -492,6 +514,7 @@ def get_morgan_fps(
     n_bits: int = 2048,
     n_threads: int = -1,
     *,
+    verbose: bool = False,
     output: Literal["bitvect"] = "bitvect",
 ) -> tuple[ExplicitBitVect, ...]
 
@@ -501,6 +524,7 @@ def get_morgan_fps(
     n_bits: int = 2048,
     n_threads: int = -1,
     *,
+    verbose: bool = False,
     output: Literal["unpacked"],
 ) -> NDArray[np.uint8]
 
@@ -510,6 +534,7 @@ def get_morgan_fps(
     n_bits: int = 2048,
     n_threads: int = -1,
     *,
+    verbose: bool = False,
     output: Literal["packed"],
 ) -> NDArray[np.uint64]
 ```
@@ -522,6 +547,7 @@ Converts RDKit molecules to Morgan fingerprints.
 - `radius`: Radius of the fingerprint.
 - `n_bits`: Size of the fingerprint.
 - `n_threads`: Number of threads, where -1 detects the count automatically.
+- `verbose`: Whether to show a progress bar with ETA. Fingerprints are then computed in chunks, which is slightly slower.
 - `output`: The format of the fingerprints: a tuple of RDKit bit vectors, an unpacked uint8 NDArray with one bit per column, or a packed uint64 NDArray of 64-bit blocks, whose last block may be padded with zeros.
 
 **Returns**
@@ -542,6 +568,7 @@ def save_morgan_fps_from_smiles(
     n_bits: int = 2048,
     *,
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> None
 ```
 
@@ -557,6 +584,7 @@ Equivalent to `mols_from_smiles`, `rdFingerprintGenerator.GetMorganGenerator`, a
 - `radius`: Radius of the fingerprint.
 - `n_bits`: Size of the fingerprint.
 - `n_threads`: The number of threads to use, where -1 detects the count automatically.
+- `verbose`: Whether to show a progress bar with ETA while processing.
 
 **Raises**
 

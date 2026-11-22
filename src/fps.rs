@@ -2,7 +2,7 @@ use crate::{
     ffi,
     ffi::FpBatch,
     ffi_error,
-    pool::{run_pool, setup_local_pool},
+    pool::{Cancelled, run_pool, run_pool_verbose, setup_local_pool},
 };
 use numpy::{
     PyArray2, PyArrayMethods, PyReadonlyArray2, PyUntypedArray, PyUntypedArrayMethods,
@@ -283,7 +283,7 @@ pub(crate) fn load_fingerprints<'py>(
 /// Returns `Err` if a SMILES cannot be parsed, naming the first one, or if the file cannot be
 /// written. No file is left behind on failure.
 #[pyfunction]
-#[pyo3(signature = (smiles, path, radius=2, n_bits=2048, *, n_threads=-1))]
+#[pyo3(signature = (smiles, path, radius=2, n_bits=2048, *, n_threads=-1, verbose=false))]
 pub(crate) fn save_morgan_fps_from_smiles(
     py: Python<'_>,
     smiles: Vec<String>,
@@ -291,6 +291,7 @@ pub(crate) fn save_morgan_fps_from_smiles(
     radius: u32,
     n_bits: u32,
     n_threads: i32,
+    verbose: bool,
 ) -> PyResult<()> {
     if n_bits == 0 {
         return Err(PyValueError::new_err("n_bits must be positive"));
@@ -304,13 +305,29 @@ pub(crate) fn save_morgan_fps_from_smiles(
         .map_err(|e| PyRuntimeError::new_err(e.what().to_string()))?;
 
     let mut blocks = vec![0u64; smiles.len() * n_blocks];
-    let failed: Vec<bool> = run_pool(py, &pool, || {
-        blocks
-            .par_chunks_mut(n_blocks)
-            .zip(smiles.par_iter())
-            .map(|(out, smi)| ffi::smiles_to_fp_blocks(generator, smi, out) != 0)
-            .collect()
-    });
+    let failed: PyResult<Vec<bool>> = run_pool_verbose(
+        py,
+        &pool,
+        verbose,
+        smiles.len(),
+        "Fingerprinting SMILES",
+        true,
+        |progress| {
+            blocks
+                .par_chunks_mut(n_blocks)
+                .zip(smiles.par_iter())
+                .map(|(out, smi)| ffi::smiles_to_fp_blocks(generator, smi, out) != 0)
+                .map(|failed| progress.track(failed))
+                .collect::<Result<Vec<_>, Cancelled>>()
+        },
+    );
+    let failed = match failed {
+        Ok(failed) => failed,
+        Err(e) => {
+            ffi::free_morgan_generator(generator);
+            return Err(e);
+        }
+    };
     ffi::free_morgan_generator(generator);
     if let Some(i) = failed.iter().position(|&f| f) {
         return Err(PyValueError::new_err(format!(

@@ -202,6 +202,7 @@ def save_morgan_fps_from_smiles(
     n_bits: int = 2048,
     *,
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> None:
     """Computes Morgan fingerprints of SMILES multi-threaded and saves them to a binary file.
 
@@ -214,6 +215,7 @@ def save_morgan_fps_from_smiles(
         radius: Radius of the fingerprint.
         n_bits: Size of the fingerprint.
         n_threads: The number of threads to use, where -1 detects the count automatically.
+        verbose: Whether to show a progress bar with ETA while processing.
 
     Raises:
         ValueError: If a SMILES is invalid (no file is written) or `n_bits` is zero.
@@ -224,6 +226,7 @@ def mols_from_smiles(
     sanitize: bool = True,
     *,
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> list[Chem.Mol | None]:
     """Parses SMILES to RDKit molecules multi-threaded.
 
@@ -231,6 +234,7 @@ def mols_from_smiles(
         smiles: Sequence of SMILES strings to parse.
         sanitize: Whether to sanitize and remove Hs.
         n_threads: The number of threads to use, where -1 detects the count automatically.
+        verbose: Whether to show a progress bar with ETA while processing.
 
     Returns:
         A list with a molecule per SMILES, or None where parsing failed.
@@ -247,6 +251,7 @@ def mols_to_smiles(
     *,
     ignore_atom_map_numbers: bool = False,
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> list[str]:
     """Writes SMILES for RDKit molecules multi-threaded.
 
@@ -269,6 +274,7 @@ def mols_to_smiles(
         all_hs_explicit: Write the H count of every atom.
         ignore_atom_map_numbers: Ignore atom map numbers when canonicalizing.
         n_threads: The number of threads to use, where -1 detects the count automatically.
+        verbose: Whether to show a progress bar with ETA while processing.
 
     Returns:
         A list with each molecule's SMILES.
@@ -284,6 +290,7 @@ def _strip_salts(
     dont_remove_everything: bool = False,
     *,
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> list[Chem.Mol | None]:
     """Removes the default salts from copies of molecules like `SaltRemover().StripMol`.
 
@@ -293,6 +300,7 @@ def _strip_salts(
         mols: A sequence of RDKit molecules, which stay unchanged.
         dont_remove_everything: Whether to keep the last salt if all fragments would be removed.
         n_threads: The number of threads to use, where -1 detects the count automatically.
+        verbose: Whether to show a progress bar with ETA while processing.
 
     Returns:
         A list with a stripped molecule per input, or None where sanitizing it failed.
@@ -316,6 +324,7 @@ def clean(
     verify: bool = True,
     inplace: Literal[False] = False,
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> list[str | None]:
     """Cleans SMILES or molecules multi-threaded and returns canonical SMILES or molecules.
 
@@ -342,6 +351,7 @@ def clean(
             other Python threads cannot use the molecules, and the molecules must not be used by a
             GIL-released RDKit function in another thread. An invalid molecule stays unchanged.
         n_threads: The number of threads to use, where -1 detects the count automatically.
+        verbose: Whether to show a progress bar with ETA while processing.
 
     Returns:
         With `inplace`, whether each molecule is valid. Otherwise a list with one result per
@@ -369,6 +379,7 @@ def clean(
     verify: bool = True,
     inplace: Literal[False] = False,
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> list[Chem.Mol | None]: ...
 @overload
 def clean(
@@ -384,6 +395,7 @@ def clean(
     neutralize: bool = False,
     inplace: Literal[True],
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> list[bool]: ...
 
 TautomerStatus: TypeAlias = Literal[
@@ -398,6 +410,7 @@ def murcko_scaffolds(
     generic: bool = False,
     include_chirality: bool = True,
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> list[str | None]:
     """Computes Murcko scaffolds multi-threaded like `MurckoScaffold.GetScaffoldForMol`.
 
@@ -412,6 +425,7 @@ def murcko_scaffolds(
         include_chirality: Whether to keep stereochemistry and isotopes. Without them, the SMILES
             equal those of `MurckoScaffoldSmiles` with its default `includeChirality=False`.
         n_threads: The number of threads to use, where -1 detects the count automatically.
+        verbose: Whether to show a progress bar with ETA while processing.
 
     Returns:
         A list with one scaffold per input, or None where it is invalid or RDKit fails. The
@@ -430,6 +444,7 @@ def murcko_scaffolds(
     generic: bool = False,
     include_chirality: bool = True,
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> list[Chem.Mol | None]: ...
 @overload
 def canonical_tautomers(
@@ -444,6 +459,7 @@ def canonical_tautomers(
     reassign_stereo: bool = True,
     v1: bool = False,
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> list[str | None]:
     """Canonicalizes tautomers multi-threaded like `TautomerEnumerator.Canonicalize`.
 
@@ -463,6 +479,7 @@ def canonical_tautomers(
         reassign_stereo: Whether to assign the stereochemistry again after tautomerization.
         v1: Whether to use the transformations of the older `GetV1TautomerEnumerator`.
         n_threads: The number of threads to use, where -1 detects the count automatically.
+        verbose: Whether to show a progress bar with ETA while processing.
 
     Returns:
         A list with one tautomer per input, or None where it is invalid, RDKit fails, or the
@@ -486,6 +503,7 @@ def canonical_tautomers(
     reassign_stereo: bool = True,
     v1: bool = False,
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> list[Chem.Mol | None]: ...
 @overload
 def enumerate_tautomers(
@@ -500,6 +518,7 @@ def enumerate_tautomers(
     reassign_stereo: bool = True,
     v1: bool = False,
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> list[tuple[list[str], TautomerStatus] | None]:
     """Enumerates all tautomers multi-threaded like `TautomerEnumerator.Enumerate`.
 
@@ -519,6 +538,7 @@ def enumerate_tautomers(
         reassign_stereo: Whether to assign the stereochemistry again after tautomerization.
         v1: Whether to use the transformations of the older `GetV1TautomerEnumerator`.
         n_threads: The number of threads to use, where -1 detects the count automatically.
+        verbose: Whether to show a progress bar with ETA while processing.
 
     Returns:
         A list with one tuple per input of its tautomers, sorted by SMILES, and the status of the
@@ -543,9 +563,10 @@ def enumerate_tautomers(
     reassign_stereo: bool = True,
     v1: bool = False,
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> list[tuple[list[Chem.Mol], TautomerStatus] | None]: ...
 def score_tautomers(
-    inputs: Sequence[str | None] | Sequence[Chem.Mol], *, n_threads: int = -1
+    inputs: Sequence[str | None] | Sequence[Chem.Mol], *, n_threads: int = -1, verbose: bool = False
 ) -> list[int | None]:
     """Scores tautomers multi-threaded like `TautomerEnumerator.ScoreTautomer`.
 
@@ -555,6 +576,7 @@ def score_tautomers(
     Args:
         inputs: SMILES strings, where None and empty strings are invalid, or molecules.
         n_threads: The number of threads to use, where -1 detects the count automatically.
+        verbose: Whether to show a progress bar with ETA while processing.
 
     Returns:
         A list with the score per input, where higher is better, or None where it is invalid or
@@ -570,6 +592,7 @@ def pick_canonical_tautomers(
     output: Literal["smiles"] = "smiles",
     *,
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> list[str | None]:
     """Picks the best tautomer of each group multi-threaded like `PickCanonical`.
 
@@ -580,6 +603,7 @@ def pick_canonical_tautomers(
         groups: Groups of tautomers as SMILES strings or molecules.
         output: Whether to return SMILES or molecules.
         n_threads: The number of threads to use, where -1 detects the count automatically.
+        verbose: Whether to show a progress bar with ETA while processing.
 
     Returns:
         A list with the best tautomer per group, or None where the group is empty, has an invalid
@@ -596,4 +620,5 @@ def pick_canonical_tautomers(
     output: Literal["mol"],
     *,
     n_threads: int = -1,
+    verbose: bool = False,
 ) -> list[Chem.Mol | None]: ...

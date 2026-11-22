@@ -1,6 +1,7 @@
 use crate::{
     ffi,
-    pool::{run_pool, setup_local_pool},
+    handle::OwnedMol,
+    pool::{Cancelled, run_pool_verbose, setup_local_pool},
     transform::{
         Inputs, Output, finish, map_inputs, outputs_to_py, read_inputs, transform, want_mol,
         wrap_ptrs,
@@ -30,6 +31,13 @@ const STATUS: [&str; 4] = [
     "canceled",
 ];
 
+/// Tautomers of one input: SMILES or the number of molecules in the list of all of them.
+struct Group {
+    smiles: Vec<String>,
+    n_mols: usize,
+    status: &'static str,
+}
+
 /// Builds the enumerator of a thread, which cannot fail for valid limits.
 fn tautomerizer(opts: &ffi::TautomerOpts) -> Tautomerizer {
     Tautomerizer(ffi::make_tautomerizer(opts))
@@ -42,7 +50,7 @@ fn tautomerizer(opts: &ffi::TautomerOpts) -> Tautomerizer {
 #[pyfunction]
 #[pyo3(signature = (
     inputs, output="smiles", *, max_tautomers=1000, max_transforms=1000, remove_sp3_stereo=true,
-    remove_bond_stereo=true, remove_isotopic_hs=true, reassign_stereo=true, v1=false, n_threads=-1,
+    remove_bond_stereo=true, remove_isotopic_hs=true, reassign_stereo=true, v1=false, n_threads=-1, verbose=false,
 ))]
 #[allow(clippy::too_many_arguments)]
 pub fn canonical_tautomers<'py>(
@@ -57,6 +65,7 @@ pub fn canonical_tautomers<'py>(
     reassign_stereo: bool,
     v1: bool,
     n_threads: i32,
+    verbose: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
     let opts = ffi::TautomerOpts {
         max_tautomers,
@@ -72,9 +81,11 @@ pub fn canonical_tautomers<'py>(
         inputs,
         output,
         n_threads,
+        verbose,
+        "Canonical tautomers",
         true,
         || tautomerizer(&opts),
-        |t, mol| ffi::tautomer_raw(t.0, mol),
+        |t, mol| OwnedMol::from_raw(ffi::tautomer_raw(t.0, mol.as_raw())),
     )
 }
 
@@ -84,7 +95,7 @@ pub fn canonical_tautomers<'py>(
 #[pyfunction]
 #[pyo3(signature = (
     inputs, output="smiles", *, max_tautomers=1000, max_transforms=1000, remove_sp3_stereo=true,
-    remove_bond_stereo=true, remove_isotopic_hs=true, reassign_stereo=true, v1=false, n_threads=-1,
+    remove_bond_stereo=true, remove_isotopic_hs=true, reassign_stereo=true, v1=false, n_threads=-1, verbose=false,
 ))]
 #[allow(clippy::too_many_arguments)]
 pub fn enumerate_tautomers<'py>(
@@ -99,6 +110,7 @@ pub fn enumerate_tautomers<'py>(
     reassign_stereo: bool,
     v1: bool,
     n_threads: i32,
+    verbose: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
     let want_mol = want_mol(output)?;
     let opts = ffi::TautomerOpts {
@@ -115,39 +127,45 @@ pub fn enumerate_tautomers<'py>(
     };
     let results = map_inputs(
         py,
-        &inputs,
+        inputs,
         n_threads,
+        verbose,
+        "Enumerating tautomers",
         || tautomerizer(&opts),
         |t, mol| {
-            let found = ffi::enumerate_raw(t.0, mol);
+            let found = ffi::enumerate_raw(t.0, mol.as_raw());
             let items: Vec<Output> = found
                 .ptrs
                 .iter()
-                .map(|&p| finish(p, want_mol, false))
+                .map(|&p| finish(OwnedMol::from_raw(p), want_mol, false))
                 .collect();
             (items, found.status)
         },
     )?;
 
     // a failure of RDKit has the status 255 and invalidates the input like a parse error.
-    let results: Vec<Option<(Vec<Output>, &str)>> = results
-        .into_iter()
-        .map(|r| {
-            let (items, status) = r?;
-            let name = STATUS.get(usize::from(status))?;
-            Some((items, *name))
-        })
-        .collect();
-
-    let mut offsets = vec![0];
     let mut ptrs = Vec::new();
-    for (items, _) in results.iter().flatten() {
-        for item in items {
-            if let Output::Mol(p) = item {
-                ptrs.push(*p);
+    let mut groups: Vec<Option<Group>> = Vec::with_capacity(results.len());
+    for result in results {
+        groups.push(result.and_then(|(items, status)| {
+            let status = *STATUS.get(usize::from(status))?;
+            let mut group = Group {
+                smiles: Vec::new(),
+                n_mols: 0,
+                status,
+            };
+            for item in items {
+                match item {
+                    Output::Smiles(s) => group.smiles.push(s),
+                    Output::Mol(mol) => {
+                        ptrs.push(mol.into_raw());
+                        group.n_mols += 1;
+                    }
+                    Output::Invalid => {}
+                }
             }
-        }
-        offsets.push(ptrs.len());
+            Some(group)
+        }));
     }
     let wrapped = if want_mol {
         Some(wrap_ptrs(py, &ptrs)?)
@@ -155,27 +173,23 @@ pub fn enumerate_tautomers<'py>(
         None
     };
 
-    let mut out = Vec::with_capacity(results.len());
-    let mut group = 0;
-    for result in results {
-        let Some((items, status)) = result else {
+    let mut out = Vec::with_capacity(groups.len());
+    let mut start = 0;
+    for group in groups {
+        let Some(Group {
+            smiles,
+            n_mols,
+            status,
+        }) = group
+        else {
             out.push(py.None());
             continue;
         };
         let tautomers: Bound<'py, PyAny> = match &wrapped {
-            Some(all) => all.get_slice(offsets[group], offsets[group + 1]).into_any(),
-            None => {
-                let smiles: Vec<String> = items
-                    .into_iter()
-                    .filter_map(|i| match i {
-                        Output::Smiles(s) => Some(s),
-                        _ => None,
-                    })
-                    .collect();
-                PyList::new(py, smiles)?.into_any()
-            }
+            Some(all) => all.get_slice(start, start + n_mols).into_any(),
+            None => PyList::new(py, smiles)?.into_any(),
         };
-        group += 1;
+        start += n_mols;
         out.push(
             PyTuple::new(py, [tautomers, status.into_pyobject(py)?.into_any()])?
                 .into_any()
@@ -187,21 +201,24 @@ pub fn enumerate_tautomers<'py>(
 
 /// Scores tautomers of SMILES or molecules on real threads like `ScoreTautomer`.
 #[pyfunction]
-#[pyo3(signature = (inputs, *, n_threads=-1))]
+#[pyo3(signature = (inputs, *, n_threads=-1, verbose=false))]
 pub fn score_tautomers<'py>(
     py: Python<'py>,
     inputs: &Bound<'py, PySequence>,
     n_threads: i32,
+    verbose: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
     let Some(inputs) = read_inputs(py, inputs)? else {
         return Ok(PyList::empty(py).into_any());
     };
     let scores = map_inputs(
         py,
-        &inputs,
+        inputs,
         n_threads,
+        verbose,
+        "Scoring tautomers",
         || (),
-        |_, mol| ffi::score_raw(mol).ok(),
+        |_, mol| ffi::score_raw(mol.as_raw()).ok(),
     )?;
     Ok(PyList::new(py, scores.into_iter().map(Option::flatten))?.into_any())
 }
@@ -210,12 +227,13 @@ pub fn score_tautomers<'py>(
 ///
 /// A group is invalid if it is empty or has an invalid item.
 #[pyfunction]
-#[pyo3(signature = (groups, output="smiles", *, n_threads=-1))]
+#[pyo3(signature = (groups, output="smiles", *, n_threads=-1, verbose=false))]
 pub fn pick_canonical_tautomers<'py>(
     py: Python<'py>,
     groups: &Bound<'py, PySequence>,
     output: &str,
     n_threads: i32,
+    verbose: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
     let want_mol = want_mol(output)?;
     let mut parts: Vec<Inputs> = Vec::with_capacity(groups.len()?);
@@ -234,41 +252,41 @@ pub fn pick_canonical_tautomers<'py>(
         reassign_stereo: true,
         v1: false,
     };
-    let results: Vec<Output> = run_pool(py, &pool, || {
-        parts
-            .par_iter()
-            .map_init(|| tautomerizer(&opts), |t, part| pick(t, part, want_mol))
-            .collect()
-    });
+    let total = parts.len();
+    let results: Vec<Output> = run_pool_verbose(
+        py,
+        &pool,
+        verbose,
+        total,
+        "Picking canonical tautomers",
+        true,
+        |progress| {
+            parts
+                .into_par_iter()
+                .map_init(|| tautomerizer(&opts), |t, part| pick(t, part, want_mol))
+                .map(|r| progress.track(r))
+                .collect::<Result<Vec<_>, Cancelled>>()
+        },
+    )?;
     outputs_to_py(py, results, want_mol)
 }
 
 /// Picks the best tautomer from the items of one group.
-fn pick(t: &Tautomerizer, part: &Inputs, want_mol: bool) -> Output {
-    let parsed: Vec<usize>;
-    let ptrs: &[usize] = match part {
-        Inputs::Mols(copies) => &copies.0,
-        Inputs::Smiles(smiles) => {
-            let mols: Vec<usize> = smiles
-                .iter()
-                .map(|s| match s.as_ref().filter(|s| !s.is_empty()) {
-                    Some(s) => ffi::parse_smiles_raw(s, true),
-                    None => 0,
-                })
-                .collect();
-            parsed = mols;
-            &parsed
-        }
+fn pick(t: &Tautomerizer, part: Inputs, want_mol: bool) -> Output {
+    // an invalid item makes the group invalid, so parsing stops at the first one.
+    let mols: Option<Vec<OwnedMol>> = match part {
+        Inputs::Mols(copies) => Some(copies),
+        Inputs::Smiles(smiles) => smiles
+            .iter()
+            .map(|s| {
+                let s = s.as_ref().filter(|s| !s.is_empty())?;
+                OwnedMol::from_raw(ffi::parse_smiles_raw(s, true))
+            })
+            .collect(),
     };
-    let best = if ptrs.is_empty() || ptrs.contains(&0) {
-        0
-    } else {
-        ffi::pick_canonical_raw(t.0, ptrs)
-    };
-    if matches!(part, Inputs::Smiles(_)) {
-        for &p in ptrs.iter().filter(|&&p| p != 0) {
-            ffi::free_mol_raw(p);
-        }
-    }
+    let best = mols.filter(|m| !m.is_empty()).and_then(|mols| {
+        let ptrs: Vec<usize> = mols.iter().map(OwnedMol::as_raw).collect();
+        OwnedMol::from_raw(ffi::pick_canonical_raw(t.0, &ptrs))
+    });
     finish(best, want_mol, true)
 }

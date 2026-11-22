@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Literal, TypeAlias, get_args, overload
 
 from rdkit import Chem
 from rdkit.Chem import rdFingerprintGenerator as rdFPGen
+from tqdm.auto import tqdm
 from typing_extensions import deprecated
 
 if TYPE_CHECKING:
@@ -288,7 +289,7 @@ def get_mols(
     Args:
         smis: Iterable of SMILES strings to convert.
         n_jobs: Number of threads, where -1 detects the count automatically.
-        verbose: Ignored.
+        verbose: Whether to show a progress bar with ETA.
         sanitize: Whether to sanitize and remove Hs.
 
     Returns:
@@ -297,12 +298,11 @@ def get_mols(
     Raises:
         ValueError: If any invalid SMILES are provided
     """
-    del verbose  # unused
     from smiles_fp._smiles_fp import mols_from_smiles
 
     if not isinstance(smis, Sequence):
         smis = list(smis)
-    mols = mols_from_smiles(smis, sanitize=sanitize, n_threads=n_jobs)
+    mols = mols_from_smiles(smis, sanitize=sanitize, n_threads=n_jobs, verbose=verbose)
     failed = [smi for smi, mol in zip(smis, mols, strict=True) if mol is None]
     if failed:
         raise ValueError(
@@ -318,6 +318,7 @@ def get_morgan_fps(
     n_bits: int = 2048,
     n_threads: int = -1,
     *,
+    verbose: bool = False,
     output: Literal["bitvect"] = "bitvect",
 ) -> tuple[ExplicitBitVect, ...]: ...
 @overload
@@ -327,6 +328,7 @@ def get_morgan_fps(
     n_bits: int = 2048,
     n_threads: int = -1,
     *,
+    verbose: bool = False,
     output: Literal["unpacked"],
 ) -> NDArray[np.uint8]: ...
 @overload
@@ -336,14 +338,16 @@ def get_morgan_fps(
     n_bits: int = 2048,
     n_threads: int = -1,
     *,
+    verbose: bool = False,
     output: Literal["packed"],
 ) -> NDArray[np.uint64]: ...
-def get_morgan_fps(
+def get_morgan_fps(  # noqa: PLR0913
     mols: Sequence[Chem.Mol],
     radius: int = 2,
     n_bits: int = 2048,
     n_threads: int = -1,
     *,
+    verbose: bool = False,
     output: FpOutput = "bitvect",
 ) -> tuple[ExplicitBitVect, ...] | NDArray[np.uint8] | NDArray[np.uint64]:
     """Converts RDKit molecules to Morgan fingerprints.
@@ -353,6 +357,8 @@ def get_morgan_fps(
         radius: Radius of the fingerprint.
         n_bits: Size of the fingerprint.
         n_threads: Number of threads, where -1 detects the count automatically.
+        verbose: Whether to show a progress bar with ETA. Fingerprints are then computed in
+            chunks, which is slightly slower.
         output: The format of the fingerprints: a tuple of RDKit bit vectors, an unpacked uint8
             NDArray with one bit per column, or a packed uint64 NDArray of 64-bit blocks, whose
             last block may be padded with zeros.
@@ -368,7 +374,20 @@ def get_morgan_fps(
     check_output(output)
     n_threads = n_threads if n_threads > 0 else cpu_count()
     morgan_gen = rdFPGen.GetMorganGenerator(radius=radius, fpSize=n_bits)
-    fps: tuple[ExplicitBitVect, ...] = morgan_gen.GetFingerprints(mols, numThreads=n_threads)
+    # RDKit has no progress hook, so a verbose run advances the bar once per chunk of molecules.
+    step = max(1000, n_threads * 64) if verbose else max(len(mols), 1)
+    parts: list[tuple[ExplicitBitVect, ...]] = []
+    with tqdm(
+        total=len(mols),
+        desc="Fingerprinting molecules",
+        unit="mol",
+        disable=not (verbose and mols),
+    ) as bar:
+        for start in range(0, len(mols), step):
+            chunk = mols[start : start + step]
+            parts.append(morgan_gen.GetFingerprints(chunk, numThreads=n_threads))
+            bar.update(len(chunk))
+    fps = parts[0] if len(parts) == 1 else tuple(fp for part in parts for fp in part)
     if output == "bitvect":
         return fps
 
