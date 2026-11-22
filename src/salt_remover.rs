@@ -1,4 +1,8 @@
-use crate::{ffi, ffi_error, handle::OwnedMol, pool::setup_local_pool};
+use crate::{
+    ffi, ffi_error,
+    handle::OwnedMol,
+    pool::{Cancelled, run_pool_verbose, setup_local_pool},
+};
 use pyo3::{
     exceptions::PyRuntimeError,
     prelude::*,
@@ -49,12 +53,16 @@ impl Drop for SaltStripper {
 ///
 /// Returns `None` for a molecule whose stripped copy fails to sanitize. Holds the GIL.
 #[pyfunction]
-#[pyo3(name = "_strip_salts", signature = (mols, dont_remove_everything=false, *, n_threads=-1))]
+#[pyo3(
+    name = "_strip_salts",
+    signature = (mols, dont_remove_everything=false, *, n_threads=-1, verbose=false)
+)]
 pub fn strip_salts<'py>(
     py: Python<'py>,
     mols: &Bound<'py, PySequence>,
     dont_remove_everything: bool,
     n_threads: i32,
+    verbose: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
     let pool = setup_local_pool(n_threads).map_err(PyRuntimeError::new_err)?;
     // fails early on an invalid pattern, so the per-thread strippers below cannot.
@@ -77,15 +85,24 @@ pub fn strip_salts<'py>(
             })
         })
         .collect();
-    let mut stripped: Vec<Option<OwnedMol>> = pool.install(|| {
-        distinct
-            .par_iter()
-            .map_init(
-                || SaltStripper::new().expect("salt patterns are valid"),
-                |stripper, &p| stripper.strip(p, dont_remove_everything),
-            )
-            .collect()
-    });
+    let mut stripped: Vec<Option<OwnedMol>> = run_pool_verbose(
+        py,
+        &pool,
+        verbose,
+        distinct.len(),
+        "Stripping salts",
+        false,
+        |progress| {
+            distinct
+                .par_iter()
+                .map_init(
+                    || SaltStripper::new().expect("salt patterns are valid"),
+                    |stripper, &p| stripper.strip(p, dont_remove_everything),
+                )
+                .map(|m| progress.track(m))
+                .collect::<Result<Vec<_>, Cancelled>>()
+        },
+    )?;
     drop(keepalive);
 
     let mut out: Vec<Option<OwnedMol>> = Vec::with_capacity(slots.len());

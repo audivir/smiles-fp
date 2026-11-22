@@ -1,7 +1,7 @@
 use crate::{
     ffi, ffi_error,
     handle::OwnedMol,
-    pool::{run_pool, setup_local_pool},
+    pool::{Cancelled, run_pool_verbose, setup_local_pool},
 };
 use pyo3::{
     exceptions::{PyRuntimeError, PyTypeError, PyValueError},
@@ -74,7 +74,8 @@ pub(crate) fn parse_roots(arg: Option<&Bound<'_, PyAny>>, n: usize) -> PyResult<
     all_hs_explicit=false,
     *,
     ignore_atom_map_numbers=false,
-    n_threads=-1
+    n_threads=-1,
+    verbose=false
 ))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn mols_to_smiles<'py>(
@@ -88,6 +89,7 @@ pub(crate) fn mols_to_smiles<'py>(
     all_hs_explicit: bool,
     ignore_atom_map_numbers: bool,
     n_threads: i32,
+    verbose: bool,
 ) -> PyResult<Bound<'py, PyList>> {
     let pool = setup_local_pool(n_threads).map_err(PyRuntimeError::new_err)?;
     let batch =
@@ -150,31 +152,44 @@ pub(crate) fn mols_to_smiles<'py>(
         }
     }
     // the GIL stays held, so no other Python thread can modify the molecules during the write.
-    let written: Vec<Vec<WrittenItem>> = pool.install(|| {
-        // each unit owns its `ROMol`, so no two threads touch the same one.
-        units
-            .par_iter()
-            .map(|unit| {
-                unit.items
-                    .iter()
-                    .map(|&(t, k, root)| {
-                        let opts = ffi::SmilesOpts {
-                            isomeric_smiles,
-                            kekule_smiles,
-                            rooted_at_atom: root,
-                            canonical,
-                            all_bonds_explicit,
-                            all_hs_explicit,
-                            ignore_atom_map_numbers,
-                        };
-                        let smi = ffi::mol_to_smiles_raw(unit.ptr, &opts)
-                            .map_err(|e| e.what().to_string());
-                        (t, k, smi)
-                    })
-                    .collect()
-            })
-            .collect()
-    });
+    let n_items: usize = units.iter().map(|u| u.items.len()).sum();
+    let written: Vec<Vec<WrittenItem>> = run_pool_verbose(
+        py,
+        &pool,
+        verbose,
+        n_items,
+        "Writing SMILES",
+        false,
+        |progress| {
+            // each unit owns its `ROMol`, so no two threads touch the same one.
+            units
+                .par_iter()
+                .map(|unit| {
+                    unit.items
+                        .iter()
+                        .map(|&(t, k, root)| {
+                            let opts = ffi::SmilesOpts {
+                                isomeric_smiles,
+                                kekule_smiles,
+                                rooted_at_atom: root,
+                                canonical,
+                                all_bonds_explicit,
+                                all_hs_explicit,
+                                ignore_atom_map_numbers,
+                            };
+                            let smi = ffi::mol_to_smiles_raw(unit.ptr, &opts)
+                                .map_err(|e| e.what().to_string());
+                            (t, k, smi)
+                        })
+                        .collect()
+                })
+                .map(|written: Vec<WrittenItem>| {
+                    let n = written.len();
+                    progress.track_n(written, n)
+                })
+                .collect::<Result<Vec<_>, Cancelled>>()
+        },
+    )?;
     let mut results: Vec<Vec<Option<Result<String, String>>>> =
         tasks.iter().map(|(_, r)| vec![None; r.len()]).collect();
     for (t, k, smi) in written.into_iter().flatten() {
@@ -203,20 +218,30 @@ pub(crate) fn mols_to_smiles<'py>(
 ///
 /// Returns `None` for each SMILES that fails to parse.
 #[pyfunction]
-#[pyo3(signature = (smiles, sanitize=true, *, n_threads=-1))]
+#[pyo3(signature = (smiles, sanitize=true, *, n_threads=-1, verbose=false))]
 pub(crate) fn mols_from_smiles<'py>(
     py: Python<'py>,
     smiles: Vec<String>,
     sanitize: bool,
     n_threads: i32,
+    verbose: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
     let pool = setup_local_pool(n_threads).map_err(PyRuntimeError::new_err)?;
-    let mols: Vec<Option<OwnedMol>> = run_pool(py, &pool, || {
-        smiles
-            .par_iter()
-            .map(|s| OwnedMol::from_raw(ffi::parse_smiles_raw(s, sanitize)))
-            .collect()
-    });
+    let mols: Vec<Option<OwnedMol>> = run_pool_verbose(
+        py,
+        &pool,
+        verbose,
+        smiles.len(),
+        "Parsing SMILES",
+        true,
+        |progress| {
+            smiles
+                .par_iter()
+                .map(|s| OwnedMol::from_raw(ffi::parse_smiles_raw(s, sanitize)))
+                .map(|m| progress.track(m))
+                .collect::<Result<Vec<_>, Cancelled>>()
+        },
+    )?;
     // `wrap_mols` takes ownership of every pointer, also when it fails.
     let ptrs: Vec<usize> = mols
         .into_iter()

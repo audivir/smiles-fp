@@ -1,7 +1,7 @@
 use crate::{
     ffi,
     handle::OwnedMol,
-    pool::{run_pool, setup_local_pool},
+    pool::{Cancelled, run_pool_verbose, setup_local_pool},
     transform::{
         Inputs, Output, finish, map_inputs, outputs_to_py, read_inputs, transform, want_mol,
         wrap_ptrs,
@@ -50,7 +50,7 @@ fn tautomerizer(opts: &ffi::TautomerOpts) -> Tautomerizer {
 #[pyfunction]
 #[pyo3(signature = (
     inputs, output="smiles", *, max_tautomers=1000, max_transforms=1000, remove_sp3_stereo=true,
-    remove_bond_stereo=true, remove_isotopic_hs=true, reassign_stereo=true, v1=false, n_threads=-1,
+    remove_bond_stereo=true, remove_isotopic_hs=true, reassign_stereo=true, v1=false, n_threads=-1, verbose=false,
 ))]
 #[allow(clippy::too_many_arguments)]
 pub fn canonical_tautomers<'py>(
@@ -65,6 +65,7 @@ pub fn canonical_tautomers<'py>(
     reassign_stereo: bool,
     v1: bool,
     n_threads: i32,
+    verbose: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
     let opts = ffi::TautomerOpts {
         max_tautomers,
@@ -80,6 +81,8 @@ pub fn canonical_tautomers<'py>(
         inputs,
         output,
         n_threads,
+        verbose,
+        "Canonical tautomers",
         true,
         || tautomerizer(&opts),
         |t, mol| OwnedMol::from_raw(ffi::tautomer_raw(t.0, mol.as_raw())),
@@ -92,7 +95,7 @@ pub fn canonical_tautomers<'py>(
 #[pyfunction]
 #[pyo3(signature = (
     inputs, output="smiles", *, max_tautomers=1000, max_transforms=1000, remove_sp3_stereo=true,
-    remove_bond_stereo=true, remove_isotopic_hs=true, reassign_stereo=true, v1=false, n_threads=-1,
+    remove_bond_stereo=true, remove_isotopic_hs=true, reassign_stereo=true, v1=false, n_threads=-1, verbose=false,
 ))]
 #[allow(clippy::too_many_arguments)]
 pub fn enumerate_tautomers<'py>(
@@ -107,6 +110,7 @@ pub fn enumerate_tautomers<'py>(
     reassign_stereo: bool,
     v1: bool,
     n_threads: i32,
+    verbose: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
     let want_mol = want_mol(output)?;
     let opts = ffi::TautomerOpts {
@@ -125,6 +129,8 @@ pub fn enumerate_tautomers<'py>(
         py,
         inputs,
         n_threads,
+        verbose,
+        "Enumerating tautomers",
         || tautomerizer(&opts),
         |t, mol| {
             let found = ffi::enumerate_raw(t.0, mol.as_raw());
@@ -195,11 +201,12 @@ pub fn enumerate_tautomers<'py>(
 
 /// Scores tautomers of SMILES or molecules on real threads like `ScoreTautomer`.
 #[pyfunction]
-#[pyo3(signature = (inputs, *, n_threads=-1))]
+#[pyo3(signature = (inputs, *, n_threads=-1, verbose=false))]
 pub fn score_tautomers<'py>(
     py: Python<'py>,
     inputs: &Bound<'py, PySequence>,
     n_threads: i32,
+    verbose: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
     let Some(inputs) = read_inputs(py, inputs)? else {
         return Ok(PyList::empty(py).into_any());
@@ -208,6 +215,8 @@ pub fn score_tautomers<'py>(
         py,
         inputs,
         n_threads,
+        verbose,
+        "Scoring tautomers",
         || (),
         |_, mol| ffi::score_raw(mol.as_raw()).ok(),
     )?;
@@ -218,12 +227,13 @@ pub fn score_tautomers<'py>(
 ///
 /// A group is invalid if it is empty or has an invalid item.
 #[pyfunction]
-#[pyo3(signature = (groups, output="smiles", *, n_threads=-1))]
+#[pyo3(signature = (groups, output="smiles", *, n_threads=-1, verbose=false))]
 pub fn pick_canonical_tautomers<'py>(
     py: Python<'py>,
     groups: &Bound<'py, PySequence>,
     output: &str,
     n_threads: i32,
+    verbose: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
     let want_mol = want_mol(output)?;
     let mut parts: Vec<Inputs> = Vec::with_capacity(groups.len()?);
@@ -242,12 +252,22 @@ pub fn pick_canonical_tautomers<'py>(
         reassign_stereo: true,
         v1: false,
     };
-    let results: Vec<Output> = run_pool(py, &pool, || {
-        parts
-            .into_par_iter()
-            .map_init(|| tautomerizer(&opts), |t, part| pick(t, part, want_mol))
-            .collect()
-    });
+    let total = parts.len();
+    let results: Vec<Output> = run_pool_verbose(
+        py,
+        &pool,
+        verbose,
+        total,
+        "Picking canonical tautomers",
+        true,
+        |progress| {
+            parts
+                .into_par_iter()
+                .map_init(|| tautomerizer(&opts), |t, part| pick(t, part, want_mol))
+                .map(|r| progress.track(r))
+                .collect::<Result<Vec<_>, Cancelled>>()
+        },
+    )?;
     outputs_to_py(py, results, want_mol)
 }
 

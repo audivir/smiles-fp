@@ -2,7 +2,7 @@ use crate::{
     clean::is_smiles_input,
     ffi, ffi_error,
     handle::OwnedMol,
-    pool::{run_pool, setup_local_pool},
+    pool::{Cancelled, SIGNAL_EVERY, run_pool_verbose, setup_local_pool},
 };
 use pyo3::{
     exceptions::{PyRuntimeError, PyValueError},
@@ -121,7 +121,10 @@ pub(crate) fn copy_mols(py: Python<'_>, seq: &Bound<'_, PySequence>) -> PyResult
     let keepalive: Bound<'_, PyAny> =
         unsafe { Bound::from_owned_ptr(py, batch.keepalive as *mut pyo3::ffi::PyObject) };
     let mut copies = Vec::with_capacity(batch.ptrs.len());
-    for &p in &batch.ptrs {
+    for (i, &p) in batch.ptrs.iter().enumerate() {
+        if i % SIGNAL_EVERY == 0 {
+            py.check_signals()?;
+        }
         let copy =
             ffi::clone_mol_raw(p).map_err(|e| PyRuntimeError::new_err(e.what().to_string()))?;
         copies.push(
@@ -158,11 +161,13 @@ fn parse_for<R>(smiles: &Option<String>, f: impl FnOnce(OwnedMol) -> R) -> Optio
 ///
 /// Each thread gets its own state from `init`, for objects that cannot be shared. `f` owns the
 /// molecule it gets, which is freed when `f` returns it or drops it. Releases the GIL for the
-/// computation.
+/// computation. With `verbose` a progress bar titled `desc` is shown.
 pub(crate) fn map_inputs<S, R, I, F>(
     py: Python<'_>,
     inputs: Inputs,
     n_threads: i32,
+    verbose: bool,
+    desc: &str,
     init: I,
     f: F,
 ) -> PyResult<Vec<Option<R>>>
@@ -172,26 +177,43 @@ where
     F: Fn(&mut S, OwnedMol) -> R + Sync + Send,
 {
     let pool = setup_local_pool(n_threads).map_err(PyRuntimeError::new_err)?;
-    Ok(run_pool(py, &pool, || match inputs {
-        Inputs::Smiles(smiles) => smiles
-            .par_iter()
-            .map_init(&init, |state, s| parse_for(s, |mol| f(state, mol)))
-            .collect(),
-        Inputs::Mols(copies) => copies
-            .into_par_iter()
-            .map_init(&init, |state, mol| Some(f(state, mol)))
-            .collect(),
-    }))
+    let total = match &inputs {
+        Inputs::Smiles(smiles) => smiles.len(),
+        Inputs::Mols(copies) => copies.len(),
+    };
+    run_pool_verbose(
+        py,
+        &pool,
+        verbose,
+        total,
+        desc,
+        true,
+        |progress| match inputs {
+            Inputs::Smiles(smiles) => smiles
+                .par_iter()
+                .map_init(&init, |state, s| parse_for(s, |mol| f(state, mol)))
+                .map(|r| progress.track(r))
+                .collect::<Result<Vec<_>, Cancelled>>(),
+            Inputs::Mols(copies) => copies
+                .into_par_iter()
+                .map_init(&init, |state, mol| Some(f(state, mol)))
+                .map(|r| progress.track(r))
+                .collect::<Result<Vec<_>, Cancelled>>(),
+        },
+    )
 }
 
 /// Applies `op`, which returns a molecule or `None`, to every input molecule.
 ///
 /// Returns a list of SMILES or molecules, with `None` for invalid inputs.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn transform<'py, S, I, F>(
     py: Python<'py>,
     inputs: &Bound<'py, PySequence>,
     output: &str,
     n_threads: i32,
+    verbose: bool,
+    desc: &str,
     verify: bool,
     init: I,
     op: F,
@@ -204,7 +226,7 @@ where
     let Some(inputs) = read_inputs(py, inputs)? else {
         return Ok(PyList::empty(py).into_any());
     };
-    let results = map_inputs(py, inputs, n_threads, init, |state, mol| {
+    let results = map_inputs(py, inputs, n_threads, verbose, desc, init, |state, mol| {
         finish(op(state, mol), want_mol, verify)
     })?;
     outputs_to_py(

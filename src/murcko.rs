@@ -10,7 +10,7 @@ use pyo3::{
 /// computation. A molecule without rings has an empty scaffold, which is not invalid.
 #[pyfunction]
 #[pyo3(signature = (
-    inputs, output="smiles", *, generic=false, include_chirality=true, n_threads=-1,
+    inputs, output="smiles", *, generic=false, include_chirality=true, n_threads=-1, verbose=false,
 ))]
 pub fn murcko_scaffolds<'py>(
     py: Python<'py>,
@@ -19,12 +19,15 @@ pub fn murcko_scaffolds<'py>(
     generic: bool,
     include_chirality: bool,
     n_threads: i32,
+    verbose: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
     transform(
         py,
         inputs,
         output,
         n_threads,
+        verbose,
+        "Murcko scaffolds",
         false,
         || (),
         |_, mol| OwnedMol::from_raw(ffi::murcko_raw(mol.as_raw(), generic, include_chirality)),
